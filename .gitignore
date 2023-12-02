@@ -173,4 +173,5 @@ dev/
 scratch/
 sandbox/
 *.tsv
-*.gbk
+*.fa*
+*.arrow
