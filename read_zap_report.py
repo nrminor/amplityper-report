@@ -148,7 +148,7 @@ def construct_file_list(
     return Ok(files_to_query)
 
 
-def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
+def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
     """
         Function `compile_data_with_io()` takes the list of paths and
         reads each file, parsing it with Polars, and writing it into one
@@ -172,6 +172,9 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
     if os.path.isfile("tmp.tsv"):
         os.remove("tmp.tsv")
 
+    if len(file_list) == 0:
+        return Err("No files found to compile data from.")
+
     # compile all tables into one large temporary table
     for i, file in enumerate(file_list):
         with open("tmp.tsv", "a", encoding="utf-8") as temp:
@@ -181,6 +184,8 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
             simplename = os.path.basename(file).replace(".tsv", "")
             sample_id = simplename.split("_")[0]
             contig = simplename.split("_")[-1]
+            if len(sample_id) == 1:
+                continue
 
             # quick test of whether the header should be written. It is only written
             # the first time
@@ -192,7 +197,9 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
             ).with_columns(
                 pl.lit(sample_id).alias("Sample ID"),
                 pl.lit(amplicon).alias("Amplicon"),
-                pl.lit(f"{amplicon}-{sample_id}-{contig}").alias("Amplicon-Sample-Contig"),
+                pl.lit(f"{amplicon}-{sample_id}-{contig}").alias(
+                    "Amplicon-Sample-Contig"
+                ),
             ).write_csv(temp, separator="\t", include_header=write_header)
 
     # lazily scan the new tmp tsv for usage downstream
@@ -200,7 +207,7 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
         "POS"
     )
 
-    return all_contigs
+    return Ok(all_contigs)
 
 
 def main() -> None:
@@ -233,12 +240,15 @@ def main() -> None:
         sys.exit(
             f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
         )
+    ivar_list = ivar_list_result.unwrap_or([])
 
     # compile all files into one Polars LazyFrame to be queried downstream
-    try:
-        all_contigs = compile_data_with_io(ivar_list_result.unwrap())
-    except IOError as message:
-        sys.exit(f"A dataframe could not be compiled.\n{message}")
+    all_contigs_result = compile_data_with_io(ivar_list)
+    if isinstance(all_contigs_result, Err):
+        sys.exit(
+            f"A dataframe could not be compiled.\n{all_contigs_result.unwrap_err()}"
+        )
+    all_contigs = all_contigs_result.unwrap()
 
     # temporarily write file to TSV for debugging
     all_contigs.sink_ipc("debug.arrow", compression="zstd")
