@@ -11,10 +11,11 @@ Example usage:
 usage: read_zap_report.py [-h] --results_dir RESULTS_DIR [--config CONFIG]
 
 options:
-  -h, --help            show this help message and exit
-  --results_dir RESULTS_DIR, -d RESULTS_DIR
-                        Results 'root' directory to traverse in search if iVar tables and other files..
-  --config CONFIG, -c CONFIG
+    -h, --help          show this help message and exit
+    --results_dir RESULTS_DIR, -d RESULTS_DIR
+                        Results 'root' directory to traverse in search if iVar tables and
+                        other files.
+    --config CONFIG, -c CONFIG
                         YAML file used to configure module such that it avoids harcoding.
 ```
 """
@@ -38,7 +39,8 @@ class ConfigParams:
     typing of each field.
     """
 
-    wildcard_path: Path
+    ivar_pattern: Path
+    fasta_pattern: Path
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -88,7 +90,8 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
     # define the statically typed schema for the config parameters
     schema = Map(
         {
-            "wildcard_path": Str(),
+            "ivar_pattern": Str(),
+            "fasta_pattern": Str(),
         }
     )
 
@@ -103,14 +106,15 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         return Err(f"The provided YAML file could not be parsed:\n{message}")
 
     params = ConfigParams(
-        wildcard_path=cast(Path, config_dict.get("wildcard_path")),
+        ivar_pattern=cast(Path, config_dict.get("ivar_pattern")),
+        fasta_pattern=cast(Path, config_dict.get("fasta_pattern")),
     )
 
     return Ok(params)
 
 
 def construct_file_list(
-    results_dir: Path, wildcard_path: Path
+    results_dir: Path, glob_pattern: Path
 ) -> Result[List[Path], str]:
     """
         Function `construct_file_list()` uses the provided path of wildcards
@@ -119,7 +123,7 @@ def construct_file_list(
     Args:
         - `results_dir: Path`: A Pathlib path instance recording the results
         "root" directory, which is the top of the READ-ZAP results hierarchy.
-        - `wildcard_path: Path`: A Pathlib path instance containing wildcards
+        - `ivar_pattern: Path`: A Pathlib path instance containing wildcards
         that can be expanded to the desired files.
 
     Returns:
@@ -128,7 +132,7 @@ def construct_file_list(
     """
 
     # collect a list of all the files to search
-    files_to_query = list(results_dir.glob(str(wildcard_path)))
+    files_to_query = list(results_dir.glob(str(glob_pattern)))
 
     # make sure that there aren't duplicates
     try:
@@ -138,7 +142,7 @@ def construct_file_list(
 
     if len(files_to_query) == 0:
         return Err(
-            f"No files found that match the wildcard path:\n{wildcard_path}\nwithin {results_dir}"
+            f"No files found that match the wildcard path:\n{glob_pattern}\nwithin {results_dir}"
         )
 
     return Ok(files_to_query)
@@ -187,9 +191,8 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
                 file, separator="\t", raise_if_empty=True, null_values=["NA", ""]
             ).with_columns(
                 pl.lit(sample_id).alias("Sample ID"),
-                pl.lit(contig).alias("Contig"),
-                pl.lit(f"{sample_id}-{contig}").alias("Sample ID Contig"),
                 pl.lit(amplicon).alias("Amplicon"),
+                pl.lit(f"{amplicon}-{sample_id}-{contig}").alias("Amplicon-Sample-Contig"),
             ).write_csv(temp, separator="\t", include_header=write_header)
 
     # lazily scan the new tmp tsv for usage downstream
@@ -203,6 +206,8 @@ def compile_data_with_io(file_list: List[Path]) -> pl.LazyFrame:
 def main() -> None:
     """
     Main coordinates the flow of data through the functions defined in `read_zap_report.py`.
+    It also handles errors and error messages so that the script can be debugged without
+    long tracebacks.
     """
 
     # parse command line arguments while handling any errors
@@ -220,24 +225,37 @@ def main() -> None:
         sys.exit(
             f"Config file parsing parsing encountered an error.\n{config_result.unwrap_err()}"
         )
-    wildcard_path = config_result.unwrap().wildcard_path
+    ivar_pattern = config_result.unwrap().ivar_pattern
 
-    # make a list of the files to query based on the provided wildcard path
-    file_list_result = construct_file_list(results_dir, wildcard_path)
+    # make a list of the iVar files to query based on the provided wildcard path
+    ivar_list_result = construct_file_list(results_dir, ivar_pattern)
     if isinstance(config_result, Err):
         sys.exit(
-            f"No files found at the provided wildcard path:\n{file_list_result.unwrap_err()}"
+            f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
         )
 
     # compile all files into one Polars LazyFrame to be queried downstream
     try:
-        all_contigs = compile_data_with_io(file_list_result.unwrap())
+        all_contigs = compile_data_with_io(ivar_list_result.unwrap())
     except IOError as message:
         sys.exit(f"A dataframe could not be compiled.\n{message}")
 
     # temporarily write file to TSV for debugging
     all_contigs.sink_ipc("debug.arrow", compression="zstd")
     os.remove("tmp.tsv")
+
+    # aggregate the lazyframe so that a comma-delimited list of
+    # nucleotide and amino-acid substitutions are in their own columns,
+    # with synonymous and nonsynonymous mutations parsed out into two
+    # more columns. Then, select the handful of columns of interest and
+    # deduplicate rows.
+
+    # Make a list of FASTA files to pull information from
+
+    # add FASTA information about depth of coverage per-contig consensus
+    # onto the lazyframe with a join
+
+    # Sort the lazyframe first by contig frequency and then by position/amplicon
 
 
 if __name__ == "__main__":

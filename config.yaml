@@ -1,1 +1,2 @@
-wildcard_path: amplicon_*/02_assembly_results/05_ivar_tables/*/*.tsv
+ivar_pattern: amplicon_*/02_assembly_results/05_ivar_tables/*/*.tsv
+fasta_pattern: amplicon_*/02_assembly_results/03_contigs/**/*_contig*_consensus.fa
