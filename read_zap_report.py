@@ -25,7 +25,7 @@ import sys
 import argparse
 from pathlib import Path
 from dataclasses import dataclass
-from typing import cast, List
+from typing import cast, List, Optional, Dict
 from result import Ok, Err, Result
 from strictyaml import load, Map, YAMLError, Str  # , Str, Int  # type: ignore
 import polars as pl
@@ -41,6 +41,18 @@ class ConfigParams:
 
     ivar_pattern: Path
     fasta_pattern: Path
+
+
+@dataclass
+class SeqWithSupport:
+    """
+    The `SeqWithSupport` dataclass stores a) each FASTA
+    sequence, and b) the read-support (depth of coverage)
+    for the contig represented in that FASTA.
+    """
+
+    sequence: str
+    read_support: Optional[int]
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -210,6 +222,76 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
     return Ok(all_contigs)
 
 
+def _try_parse_int(value: str) -> Optional[int]:
+    """
+    Helper function that handles the possibility that a read support
+    cannot be parsed as an integer from the FASTA defline and returns
+    `None` instead of raising an unrecoverable error.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def generate_seq_dict(
+    input_fasta: List[str], split_char: str
+) -> Dict[str, SeqWithSupport]:
+    """
+    Generate a dictionary that will structure FASTA deflines as its keys and use the
+    `SeqWithSupport` dataclass to store sequences and read supports as its values
+    """
+
+    deflines = [line for line in input_fasta if line.startswith(">")]
+    supports = [
+        _try_parse_int(line.split(split_char)[-1])
+        for line in input_fasta
+        if line.startswith(">")
+    ]
+    sequences: List[str] = []
+    sequence_parts: List[str] = []
+    for line in input_fasta:
+        line = line.strip()  # Remove newline and any trailing whitespace
+        if line.startswith(">"):
+            if (
+                sequence_parts
+            ):  # If there's any sequence collected, join it and add to sequences
+                sequences.append("".join(sequence_parts))
+                sequence_parts = []  # Reset for the next sequence
+        else:
+            sequence_parts.append(line)
+    if sequence_parts:
+        sequences.append("".join(sequence_parts))
+
+    seqs_and_support = [
+        SeqWithSupport(sequence=seq, read_support=support)
+        for seq, support in zip(sequences, supports)
+    ]
+
+    assert len(deflines) == len(
+        seqs_and_support
+    ), "Mismatch between the number of deflines and number of sequences"
+
+    seq_dict = dict(zip(deflines, seqs_and_support))
+
+    return seq_dict
+
+
+def compile_seq_dicts(fasta_list: List[Path]) -> List[Dict[str, SeqWithSupport]]:
+    """
+    Placeholder
+    """
+
+    seq_dicts = []
+
+    for fasta in fasta_list:
+        with open(fasta, "r", encoding="utf-8") as fasta_contents:
+            seq_dict = generate_seq_dict(fasta_contents.readlines(), "_")
+            seq_dicts.append(seq_dict)
+
+    return seq_dicts
+
+
 def main() -> None:
     """
     Main coordinates the flow of data through the functions defined in `read_zap_report.py`.
@@ -236,7 +318,7 @@ def main() -> None:
 
     # make a list of the iVar files to query based on the provided wildcard path
     ivar_list_result = construct_file_list(results_dir, ivar_pattern)
-    if isinstance(config_result, Err):
+    if isinstance(ivar_list_result, Err):
         sys.exit(
             f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
         )
@@ -254,16 +336,23 @@ def main() -> None:
     all_contigs.sink_ipc("debug.arrow", compression="zstd")
     os.remove("tmp.tsv")
 
+    # Make a list of FASTA files to pull information from
+    fasta_pattern = config_result.unwrap().fasta_pattern
+    fasta_list_result = construct_file_list(results_dir, fasta_pattern)
+    if isinstance(fasta_list_result, Err):
+        sys.exit(
+            f"No FASTAs found at the provided wildcard path:\n{fasta_list_result.unwrap_err()}"
+        )
+    _seq_dict = compile_seq_dicts(fasta_list_result.unwrap())
+
+    # add FASTA information about depth of coverage per-contig consensus
+    # onto the lazyframe with a join
+
     # aggregate the lazyframe so that a comma-delimited list of
     # nucleotide and amino-acid substitutions are in their own columns,
     # with synonymous and nonsynonymous mutations parsed out into two
     # more columns. Then, select the handful of columns of interest and
     # deduplicate rows.
-
-    # Make a list of FASTA files to pull information from
-
-    # add FASTA information about depth of coverage per-contig consensus
-    # onto the lazyframe with a join
 
     # Sort the lazyframe first by contig frequency and then by position/amplicon
 
