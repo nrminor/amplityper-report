@@ -558,6 +558,37 @@ def compute_crude_NS_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
     return new_df
 
 
+def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
+    """ """
+
+    sample_amp_dfs = (
+        unnamed_df.unique(subset=["Nucleotide Substitutions"], maintain_order=True)
+        .collect()
+        .partition_by("Amplicon", "Sample ID", maintain_order=True)
+    )
+
+    for i, df in enumerate(sample_amp_dfs):
+        cols = df.columns
+        new_cols = ["Haplotype"] + cols
+        new_df = (
+            df.sort("Depth of Coverage", descending=True)
+            .with_row_count(offset=1)
+            .cast({"row_nr": pl.Utf8})
+            .with_columns(
+                pl.concat_str(
+                    [pl.lit("Putative Haplotype"), pl.col("row_nr")], separator=" "
+                ).alias("Haplotype")
+            )
+            .drop("row_nr")
+            .select(new_cols)
+        )
+        sample_amp_dfs[i] = new_df
+
+    final_df = pl.concat(sample_amp_dfs, rechunk=True)
+
+    return final_df
+
+
 def main() -> None:
     """
     Main coordinates the flow of data through the functions defined in `read_zap_report.py`.
@@ -602,13 +633,6 @@ def main() -> None:
             f"A dataframe could not be compiled.\n{all_contigs_result.unwrap_err()}"
         )
 
-    # aggregate the lazyframe so that a comma-delimited list of
-    # nucleotide and amino-acid substitutions are in their own columns,
-    # with synonymous and nonsynonymous mutations parsed out into two
-    # more columns. Then, select the handful of columns of interest and
-    # deduplicate rows.
-    short_df = aggregate_haplotype_df(all_contigs_result.unwrap(), gene_bed)
-
     # Make a list of FASTA files to pull information from
     fasta_pattern = config_result.unwrap().fasta_pattern
     fasta_list_result = construct_file_list(results_dir, fasta_pattern)
@@ -621,11 +645,22 @@ def main() -> None:
     ]
     depth_df = compile_contig_depths(clean_fasta_list)
 
+    # aggregate the lazyframe so that a comma-delimited list of
+    # nucleotide and amino-acid substitutions are in their own columns,
+    # with synonymous and nonsynonymous mutations parsed out into two
+    # more columns. Then, select the handful of columns of interest and
+    # deduplicate rows.
+    short_df = aggregate_haplotype_df(all_contigs_result.unwrap(), gene_bed)
+
     # add FASTA information about depth of coverage per-contig consensus
     # onto the lazyframe with a join
-    final_df = compute_crude_NS_ratio(
-        short_df.join(depth_df, on="Amplicon-Sample-Contig", how="left")
+    depth_df = short_df.join(depth_df, on="Amplicon-Sample-Contig", how="left").filter(
+        ~pl.col("Depth of Coverage").is_null()
     )
+    ratio_df = compute_crude_NS_ratio(depth_df)
+
+    # Dynamically assign haplotype names per amplicon-sample combination
+    final_df = assign_haplotype_names(ratio_df)
 
     # Sort the lazyframe first by contig frequency and then by position/amplicon
     final_df.sort(
@@ -634,7 +669,7 @@ def main() -> None:
         "Depth of Coverage",
         "Nonsyn count",
         descending=[False, False, True, True],
-    ).drop("Amplicon-Sample-Contig").collect().write_excel(
+    ).drop("Amplicon-Sample-Contig").write_excel(
         "final_report.xlsx",
         autofit=False,
         freeze_panes=(1, 0),
