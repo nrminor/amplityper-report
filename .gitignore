@@ -175,3 +175,5 @@ sandbox/
 *.tsv
 *.fa*
 *.arrow
+*.xls
+*.xlsx

@@ -2261,6 +2261,17 @@ parallel = ["dask[complete]"]
 viz = ["matplotlib", "nc-time-axis", "seaborn"]
 
 [[package]]
+name = "xlsxwriter"
+version = "3.1.9"
+description = "A Python module for creating Excel XLSX files."
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "XlsxWriter-3.1.9-py3-none-any.whl", hash = "sha256:b61c1a0c786f82644936c0936ec96ee96cd3afb9440094232f7faef9b38689f0"},
+    {file = "XlsxWriter-3.1.9.tar.gz", hash = "sha256:de810bf328c6a4550f4ffd6b0b34972aeb7ffcf40f3d285a0413734f9b63a929"},
+]
+
+[[package]]
 name = "zarr"
 version = "2.16.1"
 description = "An implementation of chunked, compressed, N-dimensional arrays for Python"
@@ -2310,4 +2321,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "f1735951a81fc494474b6590ce31d228591ce9465d8e618685a1f0bdbcf9ec8b"
+content-hash = "92625f0fbac01eb102b5a5d14dc111cb560e07e9e22a5a1fac925a85889f4faa"
