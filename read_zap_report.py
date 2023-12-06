@@ -41,6 +41,7 @@ class ConfigParams:
 
     ivar_pattern: Path
     fasta_pattern: Path
+    tidyvcf_pattern: Path
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -99,6 +100,7 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         {
             "ivar_pattern": Str(),
             "fasta_pattern": Str(),
+            "tidyvcf_pattern": Str(),
         }
     )
 
@@ -115,6 +117,7 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
     params = ConfigParams(
         ivar_pattern=cast(Path, config_dict.get("ivar_pattern")),
         fasta_pattern=cast(Path, config_dict.get("fasta_pattern")),
+        tidyvcf_pattern=cast(Path, config_dict.get("tidyvcf_pattern")),
     )
 
     return Ok(params)
@@ -327,6 +330,49 @@ def generate_seq_dict(
     return seq_dict
 
 
+def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
+    """
+    Placeholder
+    """
+
+    for i, tidy_vcf in enumerate(tvcf_list):
+        with open("tmp.tvf", "a", encoding="utf-8") as tmp_file:
+            variants = (
+                pl.read_csv(tidy_vcf, separator="\t")
+                .with_columns(
+                    pl.concat_str(
+                        [pl.col("ref"), pl.col("pos"), pl.col("alt")], separator="-"
+                    ).alias("NUC_SUB")
+                )
+                .select(["NUC_SUB", "info_ANN"])
+            )
+
+            # separate out nucleotide substitutions and annotations
+            nuc_subs = variants.select("NUC_SUB").to_series().to_list()
+            anns = variants.select("info_ANN").to_series().to_list()
+
+            # Separate out the tenth annotation, which is the amino acid substitution
+            aa_vars = [ann.split("|")[10] for ann in anns]
+
+            # Separate out the codon numbers and make sure they are a numeric type
+            codons = ["".join((x for x in codon if x.isdigit())) for codon in aa_vars]
+            num_codons = [int(codon) if codon != "" else None for codon in codons]
+
+            # decide whether to write header or just append rows
+            if i == 0:
+                write_header = True
+            else:
+                write_header = False
+
+            # write out
+            pl.DataFrame({"NUC_SUB": nuc_subs, "CODON": num_codons}).write_csv(
+                tmp_file, separator="\t", include_header=write_header
+            )
+
+    # When the full dataset is ammassed read and "lazify" it
+    return pl.read_csv("tmp.tvf", separator="\t").lazy()
+
+
 def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
     """
         Function `compile_contig_depths()` loops through all FASTA files
@@ -440,7 +486,9 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
     return gene_df
 
 
-def construct_long_df(all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyFrame:
+def construct_long_df(
+    all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame, codon_df: pl.LazyFrame
+) -> pl.LazyFrame:
     """
         Function `construct_long_df()` constructs a "long" dataframe (or more specifically,
         a Polars LazyFrame query that, when evaluated downstream, will produce a dataframe)
@@ -453,6 +501,8 @@ def construct_long_df(all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.La
         `gene_df: pl.LazyFrame`: A Polars lazyframe that, when queried, will produce a
         dataframe where each row represents an amplicon, its start and stop positions, and
         which gene it is in.
+        `codon_df: pl.LazyFrame`: A Polars lazyframe that, when queried, will be a table of
+        nucleotide mutations and associated codons within the protein versions of the gene
 
     Returns:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
@@ -466,7 +516,6 @@ def construct_long_df(all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.La
                 "REF",
                 "ALT",
                 "REF_AA",
-                "ALT_CODON",
                 "ALT_AA",
                 "Amplicon",
                 "Sample ID",
@@ -481,9 +530,10 @@ def construct_long_df(all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.La
         )
         .drop(["REF", "POS", "ALT"])
         .join(gene_df, how="left", on="Amplicon")
+        .join(codon_df, how="left", on="NUC_SUB")
         .with_columns(
             pl.concat_str(
-                [pl.col("REF_AA"), pl.col("ALT_CODON"), pl.col("ALT_AA")], separator="-"
+                [pl.col("REF_AA"), pl.col("CODON"), pl.col("ALT_AA")], separator="-"
             ).alias("AA_SUB")
         )
         .with_columns(
@@ -504,7 +554,7 @@ def construct_long_df(all_contigs: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.La
                 (pl.col("ALT_AA") != pl.col("REF_AA")) & (pl.col("Noncoding") == False)
             ).alias("Nonsynonymous")
         )
-        .drop(["REF_AA", "ALT_AA", "ALT_CODON"])
+        .drop(["REF_AA", "ALT_AA", "CODON"])
     )
 
     return long_df
@@ -676,7 +726,8 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
             .cast({"row_nr": pl.Utf8})
             .with_columns(
                 pl.concat_str(
-                    [pl.lit("Putative Haplotype"), pl.col("row_nr")], separator=" "
+                    [pl.col("Amplicon"), pl.lit("=Haplotype"), pl.col("row_nr")],
+                    separator=" ",
                 ).alias("Haplotype")
             )
             .drop("row_nr")
@@ -690,7 +741,10 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
 
 
 def aggregate_haplotype_df(
-    long_contigs: pl.LazyFrame, clean_fasta_list: List[Path], gene_bed: Path
+    long_contigs: pl.LazyFrame,
+    clean_fasta_list: List[Path],
+    tvcf_list: List[Path],
+    gene_bed: Path,
 ) -> pl.DataFrame:
     """
         Function `aggregate_haplotype_df()` oversees the construction of a final
@@ -713,8 +767,11 @@ def aggregate_haplotype_df(
     # construct data frame mapping genes to amplicons
     gene_df = generate_gene_df(gene_bed)
 
+    # construct a codon table for all mutations
+    codon_df = compile_mutation_codons(tvcf_list)
+
     # construct long dataframe
-    long_df = construct_long_df(long_contigs, gene_df)
+    long_df = construct_long_df(long_contigs, gene_df, codon_df)
 
     # aggregate into short dataframe
     short_df = construct_short_df(long_df, gene_df)
@@ -796,9 +853,20 @@ def main() -> None:
         file for file in fasta_list_result.unwrap() if _check_cleanliness(file.parts)
     ]
 
+    # Make a list of "tidy" vcf files to pull codon information from
+    tvcf_pattern = config_result.unwrap().tidyvcf_pattern
+    tvcf_result = construct_file_list(results_dir, tvcf_pattern)
+    if isinstance(tvcf_result, Err):
+        sys.exit(
+            f"No 'tidy' VCF tables found at the provided wildcard path:\n{tvcf_result.unwrap_err()}"
+        )
+    clean_tvcf_list = [
+        file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
+    ]
+
     # aggregate a dataframe containing information to be reported out for review
     final_df = aggregate_haplotype_df(
-        all_contigs_result.unwrap(), clean_fasta_list, gene_bed
+        all_contigs_result.unwrap(), clean_tvcf_list, clean_fasta_list, gene_bed
     )
 
     # Sort the lazyframe first by contig frequency and then by position/amplicon
