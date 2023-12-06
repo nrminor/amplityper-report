@@ -332,7 +332,17 @@ def generate_seq_dict(
 
 def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
     """
-    Placeholder
+        Function `compile_mutation_codons()` loops through all "tidy" VCF files
+        in a provided list of Paths and creates a Polars LazyFrame containing
+        1) A column of nucleotide mutation strings, and 2) a column of codon
+        numbers for use with amino acid substitutions.
+
+    Args:
+        `tvcf_list: List[Path]`: A list containing Pathlib Path types pointing to
+        any number of tidy VCF files to be assessed.
+
+    Returns:
+        `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
 
     for i, tidy_vcf in enumerate(tvcf_list):
@@ -370,7 +380,9 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
             )
 
     # When the full dataset is ammassed read and "lazify" it
-    return pl.read_csv("tmp.tvf", separator="\t").lazy()
+    amassed_codons = pl.read_csv("tmp.tvf", separator="\t").lazy()
+    os.remove("tmp.tvf")
+    return amassed_codons
 
 
 def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
