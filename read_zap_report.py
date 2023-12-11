@@ -8,13 +8,14 @@ those haplotypes.
 
 Example usage:
 ```
-usage: read_zap_report.py [-h] --results_dir RESULTS_DIR [--config CONFIG]
+usage: rz_report [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG]
 
 options:
-    -h, --help          show this help message and exit
+    -h, --help            show this help message and exit
     --results_dir RESULTS_DIR, -d RESULTS_DIR
-                        Results 'root' directory to traverse in search if iVar tables and
-                        other files.
+                        Results 'root' directory to traverse in search if iVar tables and other files.
+    --gene_bed GENE_BED, -b GENE_BED
+                        BED of amplicons where the final column contains genes associated with each amplicon.
     --config CONFIG, -c CONFIG
                         YAML file used to configure module such that it avoids harcoding.
 ```
