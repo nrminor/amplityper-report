@@ -27,8 +27,10 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import cast, List, Optional, Dict
 from result import Ok, Err, Result
-from strictyaml import load, Map, YAMLError, Str  # , Str, Int  # type: ignore
+from strictyaml import load, Map, YAMLError, Str  # type: ignore
 import polars as pl
+from icecream import ic  # type: ignore
+from tqdm import tqdm  # type: ignore
 
 
 @dataclass
@@ -120,6 +122,9 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         tidyvcf_pattern=cast(Path, config_dict.get("tidyvcf_pattern")),
     )
 
+    ic("Configurations parsed.")
+    ic(params)
+
     return Ok(params)
 
 
@@ -140,6 +145,9 @@ def construct_file_list(
         `Result[List[Path], str]`: A Result type instance containing either
         a list of paths to the desired files, or an error message string.
     """
+
+    ic("Constructing file list:")
+    ic(glob_pattern)
 
     # collect a list of all the files to search
     files_to_query = list(results_dir.glob(str(glob_pattern)))
@@ -187,6 +195,8 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
         downstream.
     """
 
+    ic("Compiling variant data for each contig.")
+
     # Double check that a tempfile from a previous run isn't present
     if os.path.isfile("tmp.tsv"):
         os.remove("tmp.tsv")
@@ -196,8 +206,10 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
         return Err("No files found to compile data from.")
 
     # compile all tables into one large temporary table
-    for i, file in enumerate(file_list):
-        with open("tmp.tsv", "a", encoding="utf-8") as temp:
+    progress_bar = tqdm(total=len(file_list), ncols=100)
+    with open("tmp.tsv", "a", encoding="utf-8") as temp:
+        for i, file in enumerate(file_list):
+            progress_bar.update(1)
             # Parse out information in the file path to add into the dataframe
             # NOTE: this hardcoding will eventually be replaced with config params
             amplicon = str(file.parent).split("results/amplicon_")[1].split("/")[0]
@@ -222,6 +234,9 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
                     "Amplicon-Sample-Contig"
                 ),
             ).write_csv(temp, separator="\t", include_header=write_header)
+    progress_bar.close()
+
+    ic("Converting variant data to compressed arrow format.")
 
     # lazily scan the new tmp tsv for usage downstream
     pl.scan_csv("tmp.tsv", separator="\t", infer_schema_length=1500).sort(
@@ -345,17 +360,27 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
 
-    for i, tidy_vcf in enumerate(tvcf_list):
-        with open("tmp.tvf", "a", encoding="utf-8") as tmp_file:
-            variants = (
-                pl.read_csv(tidy_vcf, separator="\t")
-                .with_columns(
-                    pl.concat_str(
-                        [pl.col("ref"), pl.col("pos"), pl.col("alt")], separator="-"
-                    ).alias("NUC_SUB")
-                )
-                .select(["NUC_SUB", "info_ANN"])
-            )
+    ic("Compiling codon numbers for all coding mutations.")
+
+    progress_bar = tqdm(total=len(tvcf_list), ncols=100)
+    with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
+        for i, tidy_vcf in enumerate(tvcf_list):
+            progress_bar.update(1)
+            variants = pl.read_csv(tidy_vcf, separator="\t")
+
+            # do a couple checks to make sure the loop doesn't hang on unexpected
+            # file writes
+            if variants.shape[0] == 0:
+                continue
+            if len(set(variants.columns).intersection({"ref", "pos", "alt"})) != 3:
+                print(variants.columns)
+                continue
+
+            variants = variants.with_columns(
+                pl.concat_str(
+                    [pl.col("ref"), pl.col("pos"), pl.col("alt")], separator="-"
+                ).alias("NUC_SUB")
+            ).select(["NUC_SUB", "info_ANN"])
 
             # separate out nucleotide substitutions and annotations
             nuc_subs = variants.select("NUC_SUB").to_series().to_list()
@@ -369,19 +394,19 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
             num_codons = [int(codon) if codon != "" else None for codon in codons]
 
             # decide whether to write header or just append rows
-            if i == 0:
-                write_header = True
-            else:
-                write_header = False
+            write_header = bool(i == 0)
 
             # write out
-            pl.DataFrame({"NUC_SUB": nuc_subs, "CODON": num_codons}).write_csv(
+            pl.DataFrame({"NUC_SUB": nuc_subs, "CODON": num_codons}).unique().write_csv(
                 tmp_file, separator="\t", include_header=write_header
             )
+    progress_bar.close()
+
+    ic("All codons compiled in temporary file.")
 
     # When the full dataset is ammassed read and "lazify" it
-    amassed_codons = pl.read_csv("tmp.tvf", separator="\t").lazy()
-    os.remove("tmp.tvf")
+    amassed_codons = pl.read_csv("tmp.tvcf", separator="\t").lazy()
+    os.remove("tmp.tvcf")
     return amassed_codons
 
 
@@ -400,9 +425,13 @@ def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
 
+    ic("Compiling contig depths for each contig FASTA.")
+
     seq_dicts = []
 
+    progress_bar = tqdm(total=len(fasta_list), ncols=100)
     for fasta in fasta_list:
+        progress_bar.update(1)
         with open(fasta, "r", encoding="utf-8") as fasta_contents:
             try:
                 fasta_lines = fasta_contents.readlines()
@@ -418,6 +447,7 @@ def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
                 )
                 continue
             seq_dicts.append(seq_dict)
+    progress_bar.close()
 
     identifiers = [list(d.keys())[0] for d in seq_dicts]
     supports = [list(d.values())[0] for d in seq_dicts]
@@ -443,6 +473,8 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
     Returns:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
+
+    ic("Generating gene dataframe.")
 
     gene_df = (
         pl.scan_csv(
@@ -520,6 +552,8 @@ def construct_long_df(
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
 
+    ic("Using a series of joins to construct a long dataframe of all mutations.")
+
     long_df = (
         all_contigs.select(
             [
@@ -567,6 +601,7 @@ def construct_long_df(
             ).alias("Nonsynonymous")
         )
         .drop(["REF_AA", "ALT_AA", "CODON"])
+        .unique()
     )
 
     return long_df
@@ -588,6 +623,8 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
     Returns:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
+
+    ic("Constructing a pivoted dataframe of all unique contigs from each amplicon.")
 
     short_df = (
         long_df.unique(subset="Amplicon-Sample-Contig", maintain_order=True)
@@ -669,6 +706,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
             how="left",
         )
         .drop("Amplicon-Sample")
+        .unique()
     )
 
     return short_df
@@ -688,6 +726,8 @@ def compute_crude_ns_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
     Returns:
         `pl.LazyFrame`: A Polars LazyFrame query that will be evaluated downstream.
     """
+
+    ic("Computing a crude dN/dS ratio for each contig in each sample.")
 
     new_df = short_df.with_columns(
         (
@@ -723,13 +763,17 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
         reporting.
     """
 
-    sample_amp_dfs = (
-        unnamed_df.unique(subset=["Nucleotide Substitutions"], maintain_order=True)
-        .collect()
-        .partition_by("Amplicon", "Sample ID", maintain_order=True)
+    ic("Assigning names to each putative haplotype based on their frequencies.")
+
+    sample_amp_dfs = unnamed_df.collect().partition_by(
+        "Amplicon", "Sample ID", maintain_order=False
     )
 
+    ic("Naming each haplotype.")
+
+    progress_bar = tqdm(total=len(sample_amp_dfs), ncols=100)
     for i, df in enumerate(sample_amp_dfs):
+        progress_bar.update(1)
         cols = df.columns
         new_cols = ["Haplotype"] + cols
         new_df = (
@@ -738,7 +782,7 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
             .cast({"row_nr": pl.Utf8})
             .with_columns(
                 pl.concat_str(
-                    [pl.col("Amplicon"), pl.lit("=Haplotype"), pl.col("row_nr")],
+                    [pl.col("Amplicon"), pl.lit("Haplotype"), pl.col("row_nr")],
                     separator=" ",
                 ).alias("Haplotype")
             )
@@ -746,6 +790,7 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
             .select(new_cols)
         )
         sample_amp_dfs[i] = new_df
+    progress_bar.close()
 
     final_df = pl.concat(sample_amp_dfs, rechunk=True)
 
@@ -754,8 +799,8 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
 
 def aggregate_haplotype_df(
     long_contigs: pl.LazyFrame,
-    clean_fasta_list: List[Path],
     tvcf_list: List[Path],
+    clean_fasta_list: List[Path],
     gene_bed: Path,
 ) -> pl.DataFrame:
     """
@@ -776,6 +821,10 @@ def aggregate_haplotype_df(
         out as an excel file.
     """
 
+    ic(
+        "Running function that manages the many steps of aggregating the haplotype table."
+    )
+
     # construct data frame mapping genes to amplicons
     gene_df = generate_gene_df(gene_bed)
 
@@ -793,10 +842,13 @@ def aggregate_haplotype_df(
 
     # add FASTA information about depth of coverage per-contig consensus
     # onto the lazyframe with a join
-    depth_df = short_df.join(depth_df, on="Amplicon-Sample-Contig", how="left").filter(
-        ~pl.col("Depth of Coverage").is_null()
-    )
-    ratio_df = compute_crude_ns_ratio(depth_df)
+    ic("Joining per-contig depth information.")
+    short_df_with_depth = short_df.join(
+        depth_df, on="Amplicon-Sample-Contig", how="left"
+    ).filter(~pl.col("Depth of Coverage").is_null())
+
+    # generate crude dn/ds ratios
+    ratio_df = compute_crude_ns_ratio(short_df_with_depth)
 
     # Dynamically assign haplotype names per amplicon-sample combination
     final_df = assign_haplotype_names(ratio_df)
