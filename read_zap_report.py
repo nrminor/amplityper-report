@@ -250,6 +250,46 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
     return Ok(all_contigs)
 
 
+def collect_file_lists(
+    results_dir: Path, pattern1: Path, pattern2: Path, pattern3: Path
+) -> Result[List[List[Path]], str]:
+    """ """
+
+    # make a list of the iVar files to query based on the provided wildcard path
+    ivar_list_result = construct_file_list(results_dir, pattern1)
+    if isinstance(ivar_list_result, Err):
+        return Err(
+            f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
+        )
+    clean_ivar_list = [
+        file
+        for file in ivar_list_result.unwrap_or([])
+        if _check_cleanliness(file.parts)
+    ]
+
+    # Make a list of FASTA files to pull information from
+    fasta_list_result = construct_file_list(results_dir, pattern2)
+    if isinstance(fasta_list_result, Err):
+        return Err(
+            f"No FASTAs found at the provided wildcard path:\n{fasta_list_result.unwrap_err()}"
+        )
+    clean_fasta_list = [
+        file for file in fasta_list_result.unwrap() if _check_cleanliness(file.parts)
+    ]
+
+    # Make a list of "tidy" vcf files to pull codon information from
+    tvcf_result = construct_file_list(results_dir, pattern3)
+    if isinstance(tvcf_result, Err):
+        return Err(
+            f"No 'tidy' VCF tables found at the provided wildcard path:\n{tvcf_result.unwrap_err()}"
+        )
+    clean_tvcf_list = [
+        file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
+    ]
+
+    return Ok(clean_ivar_list, clean_fasta_list, clean_tvcf_list)
+
+
 def _try_parse_int(value: str) -> Optional[int]:
     """
     Helper function that handles the possibility that a read support
@@ -886,19 +926,19 @@ def main() -> None:
         sys.exit(
             f"Config file parsing parsing encountered an error.\n{config_result.unwrap_err()}"
         )
-    ivar_pattern = config_result.unwrap().ivar_pattern
 
-    # make a list of the iVar files to query based on the provided wildcard path
-    ivar_list_result = construct_file_list(results_dir, ivar_pattern)
-    if isinstance(ivar_list_result, Err):
+    # collect all necessary file lists
+    collect_results = collect_file_lists(
+        results_dir,
+        config_result.unwrap().ivar_pattern,
+        config_result.unwrap().fasta_pattern,
+        config_result.unwrap().tidyvcf_pattern,
+    )
+    if isinstance(collect_results, Err):
         sys.exit(
-            f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
+            f"Glob-based file listing encountered an error.\n{collect_results.unwrap_err()}"
         )
-    clean_ivar_list = [
-        file
-        for file in ivar_list_result.unwrap_or([])
-        if _check_cleanliness(file.parts)
-    ]
+    clean_ivar_list, clean_fasta_list, clean_tvcf_list = collect_results.unwrap()
 
     # compile all files into one Polars LazyFrame to be queried downstream
     all_contigs_result = compile_data_with_io(clean_ivar_list)
@@ -906,28 +946,6 @@ def main() -> None:
         sys.exit(
             f"A dataframe could not be compiled.\n{all_contigs_result.unwrap_err()}"
         )
-
-    # Make a list of FASTA files to pull information from
-    fasta_pattern = config_result.unwrap().fasta_pattern
-    fasta_list_result = construct_file_list(results_dir, fasta_pattern)
-    if isinstance(fasta_list_result, Err):
-        sys.exit(
-            f"No FASTAs found at the provided wildcard path:\n{fasta_list_result.unwrap_err()}"
-        )
-    clean_fasta_list = [
-        file for file in fasta_list_result.unwrap() if _check_cleanliness(file.parts)
-    ]
-
-    # Make a list of "tidy" vcf files to pull codon information from
-    tvcf_pattern = config_result.unwrap().tidyvcf_pattern
-    tvcf_result = construct_file_list(results_dir, tvcf_pattern)
-    if isinstance(tvcf_result, Err):
-        sys.exit(
-            f"No 'tidy' VCF tables found at the provided wildcard path:\n{tvcf_result.unwrap_err()}"
-        )
-    clean_tvcf_list = [
-        file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
-    ]
 
     # aggregate a dataframe containing information to be reported out for review
     final_df = aggregate_haplotype_df(
