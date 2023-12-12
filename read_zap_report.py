@@ -702,11 +702,13 @@ def construct_long_df(
         )
         .with_columns(
             (
+                # pylint: disable-next=singleton-comparison
                 (pl.col("ALT_AA") == pl.col("REF_AA")) & (pl.col("Noncoding") == False)
             ).alias("Synonymous")
         )
         .with_columns(
             (
+                # pylint: disable-next=singleton-comparison
                 (pl.col("ALT_AA") != pl.col("REF_AA")) & (pl.col("Noncoding") == False)
             ).alias("Nonsynonymous")
         )
@@ -1007,6 +1009,7 @@ def main() -> None:
         sys.exit(
             f"Glob-based file listing encountered an error.\n{collect_results.unwrap_err()}"
         )
+    # pylint: disable-next=assignment-from-no-return
     clean_ivar_list, clean_fasta_list, clean_tvcf_list = collect_results.unwrap()
 
     # compile all files into one Polars LazyFrame to be queried downstream
