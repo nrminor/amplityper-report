@@ -49,7 +49,14 @@ class ConfigParams:
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
     """
-    Parse command line arguments while passing errors onto main.
+        Parse command line arguments while passing errors onto main.
+
+    Args:
+        `None`
+
+    Returns:
+        `Result[argparse.Namespace, str]`: A Result type containing an `argparse` namespace
+        or an error message string.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -168,7 +175,11 @@ def construct_file_list(
 
 
 def _check_cleanliness(path_parts: tuple[str, ...]) -> bool:
-    """ """
+    """
+    Helper function to make sure that the file matched with a wildcard
+    pattern is not a macOS '._' file generated during Spotlight indexing
+    or Time Machine backups.
+    """
 
     for part in path_parts:
         if "._" in part:
@@ -253,7 +264,26 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
 def collect_file_lists(
     results_dir: Path, pattern1: Path, pattern2: Path, pattern3: Path
 ) -> Result[List[List[Path]], str]:
-    """ """
+    """
+        Function `collect_file_lists()` quarterbacks sequential executions of
+        the `construct_file_list()` function, each with a different wildcard
+        pattern. Doing so keeps the size of `main()` more reasonable and will
+        also make potential refactoring easier in the future.
+
+    Args:
+        `results_dir: Path`: A Pathlib Path type pointing to the results "root"
+        directory to be searched with the following glob wildcard patterns.
+        `pattern1: Path`: A Pathlib Path type, which can contain wildcards to
+        be expanded with the glob library.
+        `pattern2: Path`: A Pathlib Path type, which can contain wildcards to
+        be expanded with the glob library.
+        `pattern3: Path`: A Pathlib Path type, which can contain wildcards to
+        be expanded with the glob library.
+
+    Returns:
+        `Result[List[List[Path]], str]`: A Result type containing eaither a list of
+        lists or an error message string.
+    """
 
     # make a list of the iVar files to query based on the provided wildcard path
     ivar_list_result = construct_file_list(results_dir, pattern1)
@@ -287,7 +317,7 @@ def collect_file_lists(
         file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
     ]
 
-    return Ok(clean_ivar_list, clean_fasta_list, clean_tvcf_list)
+    return Ok([clean_ivar_list, clean_fasta_list, clean_tvcf_list])
 
 
 def _try_parse_int(value: str) -> Optional[int]:
@@ -414,7 +444,6 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
             if variants.shape[0] == 0:
                 continue
             if len(set(variants.columns).intersection({"ref", "pos", "alt"})) != 3:
-                print(variants.columns)
                 continue
 
             variants = variants.with_columns(
