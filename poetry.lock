@@ -2298,6 +2298,17 @@ parallel = ["dask[complete]"]
 viz = ["matplotlib", "nc-time-axis", "seaborn"]
 
 [[package]]
+name = "xlsx2csv"
+version = "0.8.1"
+description = "xlsx to csv converter"
+optional = false
+python-versions = "*"
+files = [
+    {file = "xlsx2csv-0.8.1-py3-none-any.whl", hash = "sha256:6c36c0295d64f231570479e514d6163ce135af3c431a1705b073230bedaef9f2"},
+    {file = "xlsx2csv-0.8.1.tar.gz", hash = "sha256:7ecd6d2bc2426f2e432f4fdac12211e1976d3cbb65f9033e1eda65edda2045e3"},
+]
+
+[[package]]
 name = "xlsxwriter"
 version = "3.1.9"
 description = "A Python module for creating Excel XLSX files."
@@ -2358,4 +2369,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "59080e38c304cf52784107af47a1c9748b092539406f772b6dd2a61f66746d03"
+content-hash = "e3d32c7a0da82ead7bd74cb2bb44f8012165f5c8b259d8fee3800562f17240f9"

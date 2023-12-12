@@ -26,7 +26,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import polars as pl
 from icecream import ic  # type: ignore
@@ -435,6 +435,9 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
 
     ic("Compiling codon numbers for all coding mutations.")
 
+    if os.path.isfile("tmp.tvcf"):
+        os.remove("tmp.tvcf")
+
     progress_bar = tqdm(total=len(tvcf_list), ncols=100)
     with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
         for i, tidy_vcf in enumerate(tvcf_list):
@@ -477,7 +480,7 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
     ic("All codons compiled in temporary file.")
 
     # When the full dataset is ammassed read and "lazify" it
-    amassed_codons = pl.read_csv("tmp.tvcf", separator="\t").lazy()
+    amassed_codons = pl.read_csv("tmp.tvcf", separator="\t", ignore_errors=True).lazy()
     os.remove("tmp.tvcf")
     return amassed_codons
 
@@ -688,9 +691,26 @@ def construct_long_df(
         .join(gene_df, how="left", on="Amplicon")
         .join(codon_df, how="left", on="NUC_SUB")
         .with_columns(
-            pl.concat_str(
-                [pl.col("REF_AA"), pl.col("CODON"), pl.col("ALT_AA")], separator="-"
-            ).alias("AA_SUB")
+            pl.when(pl.col("CODON").is_null())
+            .then(
+                pl.concat_str(
+                    [
+                        pl.col("REF_AA"),
+                        pl.lit("->"),
+                        pl.col("ALT_AA"),
+                        pl.lit("(Codon unknown; nucleotide position is:"),
+                        pl.col("NUC_SUB"),
+                        pl.lit(")"),
+                    ],
+                    separator=" ",
+                )
+            )
+            .otherwise(
+                pl.concat_str(
+                    [pl.col("REF_AA"), pl.col("CODON"), pl.col("ALT_AA")], separator="-"
+                )
+            )
+            .alias("AA_SUB")
         )
         .with_columns(
             pl.concat_str([pl.col("Gene"), pl.col("AA_SUB")], separator=": ").alias(
@@ -824,9 +844,9 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
     return short_df
 
 
-def compute_crude_ns_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
+def compute_crude_dnds_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
     """
-        Function `compute_crude_ns_ratio()` constructs a very crude approximation of
+        Function `compute_crude_dnds_ratio()` constructs a very crude approximation of
         πN/πS, the ratio of nonsynonymous to synonymous mutations and joins it onto
         the "short" lazyframe from `construct_short_df()`.
 
@@ -841,19 +861,28 @@ def compute_crude_ns_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
 
     ic("Computing a crude dN/dS ratio for each contig in each sample.")
 
-    new_df = short_df.with_columns(
-        (
-            (
-                (
-                    pl.col("Nonsyn count")
-                    / (pl.col("Stop Position") - pl.col("Start Position"))
-                )
-                / (
-                    pl.col("Syn count")
-                    / (pl.col("Stop Position") - pl.col("Start Position"))
-                )
-            ).alias("Crude N/S Ratio")
+    new_df = (
+        short_df.with_columns(
+            (pl.col("Stop Position") - pl.col("Start Position")).alias(
+                "Amplicon Length"
+            )
         )
+        .with_columns(
+            (
+                pl.col("Nonsyn count")
+                / ((pl.col("Amplicon Length") * 2) - pl.col("Syn count"))
+            ).alias("pn")
+        )
+        .with_columns(
+            (
+                pl.col("Syn count")
+                / ((pl.col("Amplicon Length") * 2) - pl.col("Nonsyn count"))
+            ).alias("ps")
+        )
+        .with_columns((-(3 / 4) * (1 - (4 * pl.col("pn") / 3)).log()).alias("dn"))
+        .with_columns((-(3 / 4) * (1 - (4 * pl.col("ps") / 3)).log()).alias("ds"))
+        .with_columns((pl.col("dn") / pl.col("ds")).alias("Crude dN/dS Ratio"))
+        .drop("pn", "ps", "dn", "ds")
     )
 
     return new_df
@@ -960,7 +989,7 @@ def aggregate_haplotype_df(
     ).filter(~pl.col("Depth of Coverage").is_null())
 
     # generate crude dn/ds ratios
-    ratio_df = compute_crude_ns_ratio(short_df_with_depth)
+    ratio_df = compute_crude_dnds_ratio(short_df_with_depth)
 
     # Dynamically assign haplotype names per amplicon-sample combination
     final_df = assign_haplotype_names(ratio_df)
@@ -1030,6 +1059,14 @@ def main() -> None:
         autofit=False,
         freeze_panes=(1, 0),
         header_format={"bold": True},
+        conditional_formats={
+            "Crude dN/dS Ratio": {
+                "type": "3_color_scale",
+                "mid_value": 1,
+                "min_value": 0,
+                "mid_color": "#FFFFFF",
+            }
+        },
     )
 
 
