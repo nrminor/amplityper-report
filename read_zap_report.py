@@ -210,9 +210,10 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
 
     ic("Compiling variant data for each contig.")
 
-    # Double check that a tempfile from a previous run isn't present
+    # Double check that foles from a previous run aren't present
     if os.path.isfile("tmp.tsv"):
         os.remove("tmp.tsv")
+    if os.path.isfile("contigs_long_table.arrow"):
         os.remove("contigs_long_table.arrow")
 
     if len(file_list) == 0:
