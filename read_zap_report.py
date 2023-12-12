@@ -11,13 +11,13 @@ Example usage:
 usage: rz_report [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG]
 
 options:
-    -h, --help            show this help message and exit
+    -h, --help      show this help message and exit
     --results_dir RESULTS_DIR, -d RESULTS_DIR
-                        Results 'root' directory to traverse in search if iVar tables and other files.
+                    Results 'root' directory to traverse in search if iVar tables and other files.
     --gene_bed GENE_BED, -b GENE_BED
-                        BED of amplicons where the final column contains genes associated with each amplicon.
+                    BED of amplicons where the final column contains genes associated with each amplicon.
     --config CONFIG, -c CONFIG
-                        YAML file used to configure module such that it avoids harcoding.
+                    YAML file used to configure module such that it avoids harcoding.
 ```
 """
 
@@ -26,7 +26,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, cast
+from typing import Dict, List, Tuple, Optional, cast
 
 import polars as pl
 from icecream import ic  # type: ignore
@@ -65,14 +65,14 @@ def parse_command_line_args() -> Result[argparse.Namespace, str]:
         "-d",
         type=Path,
         required=True,
-        help="Results 'root' directory to traverse in search if iVar tables and other files.",
+        help="Results 'root' directory to traverse in search if iVar tables and other files",
     )
     parser.add_argument(
         "--gene_bed",
         "-b",
         type=Path,
         required=True,
-        help="BED of amplicons where the final column contains genes associated with each amplicon.",
+        help="BED of amplicons where the final column contains genes associated with each amplicon",
     )
     parser.add_argument(
         "--config",
@@ -80,7 +80,7 @@ def parse_command_line_args() -> Result[argparse.Namespace, str]:
         type=str,
         required=False,
         default="config.yaml",
-        help="YAML file used to configure module such that it avoids harcoding.",
+        help="YAML file used to configure module such that it avoids harcoding",
     )
     args = parser.parse_args()
     if len(vars(args)) < 1:
@@ -264,7 +264,7 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
 
 def collect_file_lists(
     results_dir: Path, pattern1: Path, pattern2: Path, pattern3: Path
-) -> Result[List[List[Path]], str]:
+) -> Result[Tuple[List[Path]], str]:
     """
         Function `collect_file_lists()` quarterbacks sequential executions of
         the `construct_file_list()` function, each with a different wildcard
@@ -318,7 +318,7 @@ def collect_file_lists(
         file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
     ]
 
-    return Ok([clean_ivar_list, clean_fasta_list, clean_tvcf_list])
+    return Ok((clean_ivar_list, clean_fasta_list, clean_tvcf_list))
 
 
 def _try_parse_int(value: str) -> Optional[int]:
@@ -562,40 +562,78 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
                 "Gene",
             ],
         )
+        .select("NAME", "Gene")
         .with_columns(
             pl.col("NAME")
             .str.replace("_RIGHT", "")
             .str.replace("_LEFT", "")
             .alias("Amplicon")
         )
-        .unique(subset="Amplicon", keep="first", maintain_order=True)
-        .drop(["Ref", "NAME", "Stop Position", "INDEX", "SENSE"])
+        .drop("NAME")
+        .unique()
         .join(
-            pl.scan_csv(
-                gene_bed,
-                separator="\t",
-                has_header=False,
-                new_columns=[
-                    "Ref",
-                    "Start Position",
-                    "Stop Position",
-                    "NAME",
-                    "INDEX",
-                    "SENSE",
-                    "Gene",
-                ],
-            )
-            .with_columns(
-                pl.col("NAME")
-                .str.replace("_RIGHT", "")
-                .str.replace("_LEFT", "")
-                .alias("Amplicon")
-            )
-            .unique(subset="NAME", keep="last", maintain_order=True)
-            .drop(["Ref", "Start Position", "NAME", "Gene", "INDEX", "SENSE"]),
-            on="Amplicon",
+            (
+                pl.scan_csv(
+                    gene_bed,
+                    separator="\t",
+                    has_header=False,
+                    new_columns=[
+                        "Ref",
+                        "Start Position",
+                        "Stop Position",
+                        "NAME",
+                        "INDEX",
+                        "SENSE",
+                        "Gene",
+                    ],
+                )
+                .drop("Ref", "SENSE", "INDEX")
+                .filter(pl.col("NAME").str.contains("_LEFT"))
+                .drop("Stop Position")
+                .with_columns(
+                    pl.col("NAME")
+                    .str.replace("_RIGHT", "")
+                    .str.replace("_LEFT", "")
+                    .alias("Amplicon")
+                )
+                .drop("NAME", "Gene")
+                .unique()
+            ),
             how="left",
+            on="Amplicon",
         )
+        .join(
+            (
+                pl.scan_csv(
+                    gene_bed,
+                    separator="\t",
+                    has_header=False,
+                    new_columns=[
+                        "Ref",
+                        "Start Position",
+                        "Stop Position",
+                        "NAME",
+                        "INDEX",
+                        "SENSE",
+                        "Gene",
+                    ],
+                )
+                .drop("Ref", "SENSE", "INDEX")
+                .filter(pl.col("NAME").str.contains("_RIGHT"))
+                .drop("Start Position")
+                .with_columns(
+                    pl.col("NAME")
+                    .str.replace("_RIGHT", "")
+                    .str.replace("_LEFT", "")
+                    .alias("Amplicon")
+                )
+                .drop("NAME", "Gene")
+                .unique()
+            ),
+            how="left",
+            on="Amplicon",
+        )
+        .sort("Start Position", "Stop Position")
     )
 
     return gene_df
