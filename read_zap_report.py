@@ -21,16 +21,17 @@ options:
 ```
 """
 
+import argparse
 import os
 import sys
-import argparse
-from pathlib import Path
 from dataclasses import dataclass
-from typing import cast, List, Optional, Dict
-from result import Ok, Err, Result
-from strictyaml import load, Map, YAMLError, Str  # type: ignore
+from pathlib import Path
+from typing import Dict, List, Optional, cast
+
 import polars as pl
 from icecream import ic  # type: ignore
+from result import Err, Ok, Result
+from strictyaml import Map, Str, YAMLError, load  # type: ignore
 from tqdm import tqdm  # type: ignore
 
 
