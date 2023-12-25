@@ -19,6 +19,7 @@ tqdm = "^4.66.1"
 xlsx2csv = "^0.8.1"
 pydantic = "^2.5.2"
 multiqc = "^1.19"
+maturin = "^1.4.0"
 
 
 [tool.poetry.group.dev.dependencies]
