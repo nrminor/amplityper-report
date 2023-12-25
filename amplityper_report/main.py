@@ -1,39 +1,39 @@
 #!/usr/bin/env python3
 
 """
-This module compiles and evaluates the results from the READ-ZAP amplicon-based
+This module compiles and evaluates the results from the Amplityper amplicon-based
 haplotype phasing pipeline. In particular, it reports the haplotypes at each amplicon,
 sorted by the frequencies, alongside the synonymous and nonsynonymous mutations in
 those haplotypes.
 
-Example usage:
+
 ```
-usage: rz_report [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG]
+usage: amplityper_report.py [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG]
 
 options:
-    -h, --help      show this help message and exit
+    -h, --help            show this help message and exit
     --results_dir RESULTS_DIR, -d RESULTS_DIR
-                    Results 'root' directory to traverse in search if iVar tables and other files.
+                        Results 'root' directory to traverse in search if iVar tables and other files
     --gene_bed GENE_BED, -b GENE_BED
-                    BED of amplicons where the final column contains genes associated with each
-                    amplicon.
+                        BED of amplicons where the final column contains genes associated with each amplicon
     --config CONFIG, -c CONFIG
-                    YAML file used to configure module such that it avoids harcoding.
+                        YAML file used to configure module such that it avoids harcoding
 ```
 """
 
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+import itertools
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
 import polars as pl
-from icecream import ic  # type: ignore
+from icecream import ic  # type: ignore # pylint: disable=import-error
+from pydantic.dataclasses import dataclass
 from result import Err, Ok, Result
-from strictyaml import Map, Str, YAMLError, load  # type: ignore
-from tqdm import tqdm  # type: ignore
+from strictyaml import Int, Map, Str, YAMLError, load  # type: ignore
+from tqdm import tqdm  # type: ignore # pylint: disable=import-error
 
 
 @dataclass
@@ -47,6 +47,11 @@ class ConfigParams:
     ivar_pattern: Path
     fasta_pattern: Path
     tidyvcf_pattern: Path
+    fasta_split_char: str
+    fasta_split_index: int
+    ivar_split_char: str
+    id_split_index: int
+    hap_split_index: int
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -113,6 +118,11 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
             "ivar_pattern": Str(),
             "fasta_pattern": Str(),
             "tidyvcf_pattern": Str(),
+            "fasta_split_char": Str(),
+            "fasta_split_index": Int(),
+            "ivar_split_char": Str(),
+            "id_split_index": Int(),
+            "hap_split_index": Int(),
         }
     )
 
@@ -130,6 +140,11 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         ivar_pattern=cast(Path, config_dict.get("ivar_pattern")),
         fasta_pattern=cast(Path, config_dict.get("fasta_pattern")),
         tidyvcf_pattern=cast(Path, config_dict.get("tidyvcf_pattern")),
+        fasta_split_char=str(config_dict.get("fasta_split_char")),
+        fasta_split_index=cast(int, config_dict.get("fasta_split_index")),
+        ivar_split_char=str(config_dict.get("ivar_split_char")),
+        id_split_index=cast(int, config_dict.get("id_split_index")),
+        hap_split_index=cast(int, config_dict.get("hap_split_index")),
     )
 
     ic("Configurations parsed.")
@@ -147,7 +162,7 @@ def construct_file_list(
 
     Args:
         `results_dir: Path`: A Pathlib path instance recording the results
-        "root" directory, which is the top of the READ-ZAP results hierarchy.
+        "root" directory, which is the top of the Amplityper results hierarchy.
         `ivar_pattern: Path`: A Pathlib path instance containing wildcards
         that can be expanded to the desired files.
 
@@ -189,7 +204,9 @@ def _check_cleanliness(path_parts: tuple[str, ...]) -> bool:
     return True
 
 
-def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
+def compile_data_with_io(
+    file_list: List[Path], config: ConfigParams
+) -> Result[pl.LazyFrame, str]:
     """
         Function `compile_data_with_io()` takes the list of paths and
         reads each file, parsing it with Polars, and writing it into one
@@ -214,8 +231,8 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
     # Double check that foles from a previous run aren't present
     if os.path.isfile("tmp.tsv"):
         os.remove("tmp.tsv")
-    if os.path.isfile("contigs_long_table.arrow"):
-        os.remove("contigs_long_table.arrow")
+    if os.path.isfile("tmp.arrow"):
+        os.remove("tmp.arrow")
 
     if len(file_list) == 0:
         return Err("No files found to compile data from.")
@@ -226,26 +243,33 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
         for i, file in enumerate(file_list):
             progress_bar.update(1)
             # Parse out information in the file path to add into the dataframe
-            # NOTE: this hardcoding will eventually be replaced with config params
-            amplicon = str(file.parent).split("results/amplicon_")[1].split("/")[0]
-            simplename = os.path.basename(file).replace(".tsv", "")
-            sample_id = simplename.split("_")[0]
-            contig = simplename.split("_")[-1]
-            if len(sample_id) == 1:
-                continue
+            simplename = os.path.basename(file).replace("_ivar.tsv", "")
+            sample_id = simplename.split(config.ivar_split_char)[config.id_split_index]
+            haplotype = simplename.split(config.ivar_split_char)[config.hap_split_index]
+            amplicon = simplename.replace(sample_id, "").replace(haplotype, "")
+
+            amplicon = amplicon[1:] if amplicon[0] == "_" else amplicon
+            amplicon = amplicon[:-1] if amplicon[-1] == "_" else amplicon
 
             # quick test of whether the header should be written. It is only written
             # the first time
             write_header = bool(i == 0)
 
             # Read the csv, modify it, and write it onto the growing temporary tsv
-            pl.read_csv(
+            ivar_df = pl.read_csv(
                 file, separator="\t", raise_if_empty=True, null_values=["NA", ""]
-            ).with_columns(
+            )
+
+            # make empty row for haplotype info if iVar called no variants
+            if ivar_df.shape[0] == 0:
+                ivar_df.vstack(ivar_df.clear(n=1), in_place=True)
+
+            # Add sample, amplicon, and haplotype information
+            ivar_df.with_columns(
                 pl.lit(sample_id).alias("Sample ID"),
                 pl.lit(amplicon).alias("Amplicon"),
-                pl.lit(contig).alias("Contig"),
-                pl.lit(f"{amplicon}-{sample_id}-{contig}").alias(
+                pl.lit(haplotype).alias("Contig"),
+                pl.lit(f"{amplicon}-{sample_id}-{haplotype}").alias(
                     "Amplicon-Sample-Contig"
                 ),
             ).write_csv(temp, separator="\t", include_header=write_header)
@@ -256,9 +280,9 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
     # lazily scan the new tmp tsv for usage downstream
     pl.scan_csv("tmp.tsv", separator="\t", infer_schema_length=1500).sort(
         "POS"
-    ).sink_ipc("contigs_long_table.arrow", compression="zstd")
+    ).sink_ipc("tmp.arrow", compression="zstd")
 
-    all_contigs = pl.scan_ipc("contigs_long_table.arrow", memory_map=False)
+    all_contigs = pl.scan_ipc("tmp.arrow", memory_map=False)
     os.remove("tmp.tsv")
 
     return Ok(all_contigs)
@@ -266,7 +290,7 @@ def compile_data_with_io(file_list: List[Path]) -> Result[pl.LazyFrame, str]:
 
 def collect_file_lists(
     results_dir: Path, pattern1: Path, pattern2: Path, pattern3: Path
-) -> Result[Tuple[List[Path]], str]:
+) -> Result[Tuple[List[Path], List[Path], List[Path]], str]:
     """
         Function `collect_file_lists()` quarterbacks sequential executions of
         the `construct_file_list()` function, each with a different wildcard
@@ -335,7 +359,7 @@ def _try_parse_int(value: str) -> Optional[int]:
         return None
 
 
-def _try_parse_identifier(defline: str, amplicon: str) -> Optional[str]:
+def _try_parse_identifier(defline: str) -> Optional[str]:
     """
     Helper function that splits a contig's FASTA defline by the "_" symbol,
     pulls a sample id assuming it is the second item in the underscore-split
@@ -345,11 +369,16 @@ def _try_parse_identifier(defline: str, amplicon: str) -> Optional[str]:
     and amplicons.
     """
 
-    items = defline.split("_")
-    sample_id = items[1]
-    (contig,) = [item for item in items if "contig" in item]
+    cleaned_defline = defline.replace(">", "").split(" ")[0]
+    items = cleaned_defline.split("_")
+    sample_id = items[0]
+    (haplotype,) = [item for item in items if "haplotype" in item]
+    amplicon = cleaned_defline.replace(sample_id, "").replace(haplotype, "")
 
-    identifier = f"{amplicon}-{sample_id}-{contig}"
+    amplicon = amplicon[1:] if amplicon[0] == "_" else amplicon
+    amplicon = amplicon[:-1] if amplicon[-1] == "_" else amplicon
+
+    identifier = f"{amplicon}-{sample_id}-{haplotype}"
 
     return identifier
 
@@ -367,7 +396,7 @@ def _is_valid_utf8(fasta_line: str) -> bool:
 
 
 def generate_seq_dict(
-    fasta_path: Path, input_fasta: List[str], split_char: str
+    input_fasta: List[str], config: ConfigParams
 ) -> Optional[Dict[Optional[str], Optional[int]]]:
     """
         The function `generate_seq_dict()` uses a series of list comprehensions
@@ -379,8 +408,6 @@ def generate_seq_dict(
         coverage.
 
     Args:
-        `fasta_path: Path`: A Pathlib Path type pointing to the FASTA of
-        interest.
         `input_fasta: List[str]`: Parsed FASTA lines store as strings in a list.
         `split_char: str`: The character, e.g. "-", to use for splitting the
         FASTA defline to parse out information.
@@ -397,18 +424,13 @@ def generate_seq_dict(
     if False in decodable:
         return None
 
-    (amplicon,) = [
-        item.replace("amplicon_", "")
-        for item in os.path.normpath(fasta_path).split(os.sep)
-        if "amplicon" in item
-    ]
     deflines = [line for line in input_fasta if line.startswith(">")]
     supports = [
-        _try_parse_int(line.split(split_char)[-1])
+        _try_parse_int(line.split(config.fasta_split_char)[config.fasta_split_index])
         for line in input_fasta
         if line.startswith(">")
     ]
-    identifiers = [_try_parse_identifier(defline, amplicon) for defline in deflines]
+    identifiers = [_try_parse_identifier(defline) for defline in deflines]
 
     assert len(deflines) == len(
         identifiers
@@ -439,17 +461,21 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
     if os.path.isfile("tmp.tvcf"):
         os.remove("tmp.tvcf")
 
+    header_written = False
+
     progress_bar = tqdm(total=len(tvcf_list), ncols=100)
     with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
-        for i, tidy_vcf in enumerate(tvcf_list):
+        for tidy_vcf in tvcf_list:
             progress_bar.update(1)
             variants = pl.read_csv(tidy_vcf, separator="\t")
 
-            # do a couple checks to make sure the loop doesn't hang on unexpected
+            # do a few checks to make sure the loop doesn't hang on unexpected
             # file writes
             if variants.shape[0] == 0:
                 continue
             if len(set(variants.columns).intersection({"ref", "pos", "alt"})) != 3:
+                continue
+            if "info_ANN" not in variants.columns and "NUC_SUB" not in variants.columns:
                 continue
 
             variants = variants.with_columns(
@@ -470,7 +496,11 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
             num_codons = [int(codon) if codon != "" else None for codon in codons]
 
             # decide whether to write header or just append rows
-            write_header = bool(i == 0)
+            if header_written is False:
+                write_header = True
+                header_written = True
+            else:
+                write_header = False
 
             # write out
             pl.DataFrame({"NUC_SUB": nuc_subs, "CODON": num_codons}).unique().write_csv(
@@ -486,7 +516,7 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
     return amassed_codons
 
 
-def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
+def compile_contig_depths(fasta_list: List[Path], config: ConfigParams) -> pl.LazyFrame:
     """
         Function `compile_contig_depths()` loops through all FASTA files
         in a provided list of FASTA Paths and creates a Polars LazyFrame containing
@@ -516,7 +546,7 @@ def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
                     f"The FASTA at the following path could not be decoded to utf-8:\n{fasta}"
                 )
                 continue
-            seq_dict = generate_seq_dict(fasta, fasta_lines, "_")
+            seq_dict = generate_seq_dict(fasta_lines, config)
             if seq_dict is None:
                 print(
                     f"The FASTA at the following path could not be decoded to utf-8:\n{fasta}"
@@ -525,8 +555,12 @@ def compile_contig_depths(fasta_list: List[Path]) -> pl.LazyFrame:
             seq_dicts.append(seq_dict)
     progress_bar.close()
 
-    identifiers = [list(d.keys())[0] for d in seq_dicts]
-    supports = [list(d.values())[0] for d in seq_dicts]
+    identifiers = list(
+        itertools.chain.from_iterable(seq_dict.keys() for seq_dict in seq_dicts)
+    )
+    supports = list(
+        itertools.chain.from_iterable(seq_dict.values() for seq_dict in seq_dicts)
+    )
 
     depth_df = pl.LazyFrame(
         {"Amplicon-Sample-Contig": identifiers, "Depth of Coverage": supports}
@@ -562,19 +596,19 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
                 "Start Position",
                 "Stop Position",
                 "NAME",
+                "RESPLICE_NAME",
                 "INDEX",
-                "SENSE",
                 "Gene",
             ],
         )
-        .select("NAME", "Gene")
+        .select("RESPLICE_NAME", "Gene")
         .with_columns(
-            pl.col("NAME")
+            pl.col("RESPLICE_NAME")
             .str.replace("_RIGHT", "")
             .str.replace("_LEFT", "")
             .alias("Amplicon")
         )
-        .drop("NAME")
+        .drop("RESPLICE_NAME")
         .unique()
         .join(
             (
@@ -587,21 +621,21 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
                         "Start Position",
                         "Stop Position",
                         "NAME",
+                        "RESPLICE_NAME",
                         "INDEX",
-                        "SENSE",
                         "Gene",
                     ],
                 )
-                .drop("Ref", "SENSE", "INDEX")
-                .filter(pl.col("NAME").str.contains("_LEFT"))
+                .drop("Ref", "INDEX")
+                .filter(pl.col("RESPLICE_NAME").str.contains("_LEFT"))
                 .drop("Stop Position")
                 .with_columns(
-                    pl.col("NAME")
+                    pl.col("RESPLICE_NAME")
                     .str.replace("_RIGHT", "")
                     .str.replace("_LEFT", "")
                     .alias("Amplicon")
                 )
-                .drop("NAME", "Gene")
+                .drop("NAME", "RESPLICE_NAME", "Gene")
                 .unique()
             ),
             how="left",
@@ -618,21 +652,21 @@ def generate_gene_df(gene_bed: Path) -> pl.LazyFrame:
                         "Start Position",
                         "Stop Position",
                         "NAME",
+                        "RESPLICE_NAME",
                         "INDEX",
-                        "SENSE",
                         "Gene",
                     ],
                 )
-                .drop("Ref", "SENSE", "INDEX")
-                .filter(pl.col("NAME").str.contains("_RIGHT"))
+                .drop("Ref", "INDEX")
+                .filter(pl.col("RESPLICE_NAME").str.contains("_RIGHT"))
                 .drop("Start Position")
                 .with_columns(
-                    pl.col("NAME")
+                    pl.col("RESPLICE_NAME")
                     .str.replace("_RIGHT", "")
                     .str.replace("_LEFT", "")
                     .alias("Amplicon")
                 )
-                .drop("NAME", "Gene")
+                .drop("NAME", "RESPLICE_NAME", "Gene")
                 .unique()
             ),
             how="left",
@@ -683,14 +717,15 @@ def construct_long_df(
                 "Amplicon-Sample-Contig",
             ]
         )
+        .unique()
         .with_columns(
             pl.concat_str(
                 [pl.col("REF"), pl.col("POS"), pl.col("ALT")], separator="-"
             ).alias("NUC_SUB")
         )
-        .drop(["REF", "POS", "ALT"])
         .join(gene_df, how="left", on="Amplicon")
         .join(codon_df, how="left", on="NUC_SUB")
+        .unique()
         .with_columns(
             pl.when(pl.col("CODON").is_null())
             .then(
@@ -699,9 +734,8 @@ def construct_long_df(
                         pl.col("REF_AA"),
                         pl.lit("->"),
                         pl.col("ALT_AA"),
-                        pl.lit("(Codon unknown; nucleotide position is:"),
-                        pl.col("NUC_SUB"),
-                        pl.lit(")"),
+                        pl.lit("at nuc. position"),
+                        pl.col("POS"),
                     ],
                     separator=" ",
                 )
@@ -713,6 +747,7 @@ def construct_long_df(
             )
             .alias("AA_SUB")
         )
+        .drop(["REF", "POS", "ALT"])
         .with_columns(
             pl.concat_str([pl.col("Gene"), pl.col("AA_SUB")], separator=": ").alias(
                 "AA_SUB"
@@ -724,18 +759,19 @@ def construct_long_df(
         .with_columns(
             (
                 # pylint: disable-next=singleton-comparison
-                (pl.col("ALT_AA") == pl.col("REF_AA")) & (pl.col("Noncoding") == False)
+                (pl.col("ALT_AA") == pl.col("REF_AA")) & (pl.col("Noncoding") == False)  # noqa: E712
             ).alias("Synonymous")
         )
         .with_columns(
             (
                 # pylint: disable-next=singleton-comparison
-                (pl.col("ALT_AA") != pl.col("REF_AA")) & (pl.col("Noncoding") == False)
+                (pl.col("ALT_AA") != pl.col("REF_AA")) & (pl.col("Noncoding") == False)  # noqa: E712
             ).alias("Nonsynonymous")
         )
         .drop(["REF_AA", "ALT_AA", "CODON"])
-        .unique()
     )
+
+    long_df.collect().write_ipc("haplotype_long_table.arrow", compression="zstd")
 
     return long_df
 
@@ -760,7 +796,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
     ic("Constructing a pivoted dataframe of all unique contigs from each amplicon.")
 
     short_df = (
-        long_df.unique(subset="Amplicon-Sample-Contig", maintain_order=True)
+        long_df.unique(subset="Amplicon-Sample-Contig")
         .select(["Amplicon-Sample-Contig"])
         .join(
             long_df.select(
@@ -773,10 +809,11 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
             on="Amplicon-Sample-Contig",
             how="left",
         )
+        .unique()
         .join(gene_df, how="left", on="Amplicon")
         .join(
             long_df.select(["Amplicon-Sample-Contig", "NUC_SUB"])
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("NUC_SUB"))
             .with_columns(
                 pl.col("NUC_SUB").list.join(", ").alias("Nucleotide Substitutions")
@@ -787,7 +824,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
         )
         .join(
             long_df.select(["Amplicon-Sample-Contig", "NUC_SUB"])
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("NUC_SUB").count())
             .with_columns(pl.col("NUC_SUB").alias("Nuc Mut Count"))
             .drop("NUC_SUB"),
@@ -797,7 +834,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
         .join(
             long_df.select(["Amplicon-Sample-Contig", "AA_SUB", "Synonymous"])
             .filter(pl.col("Synonymous"))
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("AA_SUB"))
             .with_columns(
                 pl.col("AA_SUB").list.join(", ").alias("Synonymous Mutations")
@@ -809,7 +846,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
         .join(
             long_df.select(["Amplicon-Sample-Contig", "AA_SUB", "Synonymous"])
             .filter(pl.col("Synonymous"))
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("AA_SUB").count())
             .with_columns(pl.col("AA_SUB").alias("Syn count"))
             .drop("AA_SUB"),
@@ -819,7 +856,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
         .join(
             long_df.select(["Amplicon-Sample-Contig", "AA_SUB", "Nonsynonymous"])
             .filter(pl.col("Nonsynonymous"))
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("AA_SUB"))
             .with_columns(
                 pl.col("AA_SUB").list.join(", ").alias("Nonsynonymous Mutations")
@@ -831,7 +868,7 @@ def construct_short_df(long_df: pl.LazyFrame, gene_df: pl.LazyFrame) -> pl.LazyF
         .join(
             long_df.select(["Amplicon-Sample-Contig", "AA_SUB", "Nonsynonymous"])
             .filter(pl.col("Nonsynonymous"))
-            .group_by("Amplicon-Sample-Contig", maintain_order=True)
+            .group_by("Amplicon-Sample-Contig")
             .agg(pl.col("AA_SUB").count())
             .with_columns(pl.col("AA_SUB").alias("Nonsyn count"))
             .drop("AA_SUB"),
@@ -884,6 +921,7 @@ def compute_crude_dnds_ratio(short_df: pl.LazyFrame) -> pl.LazyFrame:
         .with_columns((-(3 / 4) * (1 - (4 * pl.col("ps") / 3)).log()).alias("ds"))
         .with_columns((pl.col("dn") / pl.col("ds")).alias("Crude dN/dS Ratio"))
         .drop("pn", "ps", "dn", "ds")
+        .unique()
     )
 
     return new_df
@@ -919,7 +957,8 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
         cols = df.columns
         new_cols = ["Haplotype"] + cols
         new_df = (
-            df.sort("Depth of Coverage", descending=True)
+            df.unique()
+            .sort("Depth of Coverage", descending=True)
             .with_row_count(offset=1)
             .cast({"row_nr": pl.Utf8})
             .with_columns(
@@ -944,6 +983,7 @@ def aggregate_haplotype_df(
     tvcf_list: List[Path],
     clean_fasta_list: List[Path],
     gene_bed: Path,
+    config: ConfigParams,
 ) -> pl.DataFrame:
     """
         Function `aggregate_haplotype_df()` oversees the construction of a final
@@ -980,7 +1020,7 @@ def aggregate_haplotype_df(
     short_df = construct_short_df(long_df, gene_df)
 
     # Compile depths from contig FASTA files
-    depth_df = compile_contig_depths(clean_fasta_list)
+    depth_df = compile_contig_depths(clean_fasta_list, config)
 
     # add FASTA information about depth of coverage per-contig consensus
     # onto the lazyframe with a join
@@ -1043,7 +1083,7 @@ def main() -> None:
     clean_ivar_list, clean_fasta_list, clean_tvcf_list = collect_results.unwrap()
 
     # compile all files into one Polars LazyFrame to be queried downstream
-    all_contigs_result = compile_data_with_io(clean_ivar_list)
+    all_contigs_result = compile_data_with_io(clean_ivar_list, config_result.unwrap())
     if isinstance(all_contigs_result, Err):
         sys.exit(
             f"A dataframe could not be compiled.\n{all_contigs_result.unwrap_err()}"
@@ -1051,7 +1091,11 @@ def main() -> None:
 
     # aggregate a dataframe containing information to be reported out for review
     final_df = aggregate_haplotype_df(
-        all_contigs_result.unwrap(), clean_tvcf_list, clean_fasta_list, gene_bed
+        all_contigs_result.unwrap(),
+        clean_tvcf_list,
+        clean_fasta_list,
+        gene_bed,
+        config_result.unwrap(),
     )
 
     # Sort the lazyframe first by contig frequency and then by position/amplicon
@@ -1069,6 +1113,10 @@ def main() -> None:
             }
         },
     )
+
+    # clear temporary arrow structure
+    if os.path.isfile("tmp.arrow"):
+        os.remove("tmp.arrow")
 
 
 if __name__ == "__main__":
