@@ -9,5 +9,6 @@ name = "amplityper_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+glob-match = "0.2.1"
 polars = "0.35.4"
 pyo3 = "0.19.0"

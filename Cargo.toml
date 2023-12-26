@@ -10,5 +10,6 @@ crate-type = ["cdylib"]
 path = "src/core/lib.rs"
 
 [dependencies]
+globmatch = "0.3.0"
 polars = "0.35.4"
 pyo3 = "0.19.0"
