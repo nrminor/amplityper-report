@@ -177,7 +177,7 @@ def construct_file_list(
 
     # collect a list of all the files to search
     # pylint: disable-next=c-extension-no-member
-    files_to_query = atc.build_file_list(results_dir, glob_pattern)
+    files_to_query = atc.build_file_list(str(results_dir), str(glob_pattern))
 
     # make sure that there aren't duplicates
     try:
