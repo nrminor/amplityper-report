@@ -77,7 +77,7 @@ fn compile_with_io(
     // prepare a new column of haplotype IDs
     ivar_lf = ivar_lf
         .with_column(lit(file_meta.amplicon.clone()).alias("Amplicon"))
-        .with_column(lit(file_meta.sample_id.clone()).alias("Sample"))
+        .with_column(lit(file_meta.sample_id.clone()).alias("Sample ID"))
         .with_column(lit(file_meta.haplotype.clone()).alias("Contig"))
         .with_column(
             lit(format!(

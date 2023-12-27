@@ -193,19 +193,6 @@ def construct_file_list(
     return Ok(files_to_query)
 
 
-def _check_cleanliness(path_parts: tuple[str, ...]) -> bool:
-    """
-    Helper function to make sure that the file matched with a wildcard
-    pattern is not a macOS '._' file generated during Spotlight indexing
-    or Time Machine backups.
-    """
-
-    for part in path_parts:
-        if "._" in part:
-            return False
-    return True
-
-
 def compile_data_with_io(
     file_list: List[Path], config: ConfigParams
 ) -> Result[pl.LazyFrame, str]:
@@ -278,11 +265,6 @@ def collect_file_lists(
         return Err(
             f"No files found at the provided wildcard path:\n{ivar_list_result.unwrap_err()}"
         )
-    clean_ivar_list = [
-        file
-        for file in ivar_list_result.unwrap_or([])
-        if _check_cleanliness(file.parts)
-    ]
 
     # Make a list of FASTA files to pull information from
     fasta_list_result = construct_file_list(results_dir, pattern2)
@@ -290,9 +272,6 @@ def collect_file_lists(
         return Err(
             f"No FASTAs found at the provided wildcard path:\n{fasta_list_result.unwrap_err()}"
         )
-    clean_fasta_list = [
-        file for file in fasta_list_result.unwrap() if _check_cleanliness(file.parts)
-    ]
 
     # Make a list of "tidy" vcf files to pull codon information from
     tvcf_result = construct_file_list(results_dir, pattern3)
@@ -300,11 +279,8 @@ def collect_file_lists(
         return Err(
             f"No 'tidy' VCF tables found at the provided wildcard path:\n{tvcf_result.unwrap_err()}"
         )
-    clean_tvcf_list = [
-        file for file in tvcf_result.unwrap() if _check_cleanliness(file.parts)
-    ]
 
-    return Ok((clean_ivar_list, clean_fasta_list, clean_tvcf_list))
+    return Ok((ivar_list_result.unwrap_or([]), fasta_list_result.unwrap(), tvcf_result.unwrap()))
 
 
 def _try_parse_int(value: str) -> Optional[int]:
