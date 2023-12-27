@@ -128,7 +128,7 @@ pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<(), String> {
     }
 
     // Create a temporary TSV file with append set to true
-    let temp_tsv = OpenOptions::new().append(true).open("tmp.tsv").expect(
+    let temp_tsv = OpenOptions::new().create(true).append(true).open("tmp.tsv").expect(
         "Failed to create new temporary TSV file. Please double check file writing permissions.",
     );
 
