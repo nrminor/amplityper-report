@@ -22,13 +22,13 @@ options:
 """
 
 import argparse
+import itertools
 import os
 import sys
-import itertools
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as atc # type: ignore
+import amplityper_core as atc  # type: ignore
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
