@@ -28,7 +28,7 @@ import itertools
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as at # type: ignore
+import amplityper_core as atc # type: ignore
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
@@ -176,7 +176,8 @@ def construct_file_list(
     ic(glob_pattern)
 
     # collect a list of all the files to search
-    files_to_query = at.build_file_list(results_dir, glob_pattern)
+    # pylint: disable-next=c-extension-no-member
+    files_to_query = atc.build_file_list(results_dir, glob_pattern)
 
     # make sure that there aren't duplicates
     try:
@@ -232,7 +233,7 @@ def compile_data_with_io(
 
     # Use core module written in Rust to traverse the file system and run
     # read/writes quickly
-    at.collate_results(file_list)
+    atc.collate_results(file_list) # pylint: disable=c-extension-no-member
 
     ic("Converting variant data to compressed arrow format.")
 
