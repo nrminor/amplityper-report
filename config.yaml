@@ -1,3 +1,27 @@
-ivar_pattern: amplicon_*/02_assembly_results/05_ivar_tables/*/*.tsv
-fasta_pattern: amplicon_*/02_assembly_results/03_contigs/**/*_contig*_consensus.fa
-tidyvcf_pattern: amplicon_*/02_assembly_results/04_contig_VCFs/**/*.tvcf.tsv
+### CONFIGURATION SETTINGS TO BE USED WHEN REPORTING RESULTS ###
+### -------------------------------------------------------- ###
+
+# A file path "pattern" that contains wildcards such that when the
+# wildcards are expanded, the pattern will allow retrieval of all
+# available iVar variant tables.
+ivar_pattern: "*_ivar.tsv"
+
+# A file path "pattern" that contains wildcards such that when the
+# wildcards are expanded, the pattern will allow retrieval of all
+# available haplotype sequences in FASTA format.
+fasta_pattern: "*_haplotypes.fasta"
+
+# A file path "pattern" that contains wildcards such that when the
+# wildcards are expanded, the pattern will allow retrieval of all
+# available "tidy" files.
+tidyvcf_pattern: "*.tvcf.tsv"
+
+# FASTA header line splitting character and index
+fasta_split_char: "="
+fasta_split_index: -1
+
+# Directions for amplicon, sample, and contig names
+ivar_split_char: "_"
+id_split_index: 0
+hap_split_index: -1
+# ampl_split_index: 1:2

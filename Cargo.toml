@@ -11,5 +11,6 @@ path = "src/core/lib.rs"
 
 [dependencies]
 globmatch = "0.3.0"
-polars = "0.35.4"
+polars = { version = "0.35.4", features = ["lazy", "csv", "polars-io"]}
+polars-io = { version = "0.35.4", features = ["ipc"] }
 pyo3 = "0.19.0"

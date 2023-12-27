@@ -228,6 +228,10 @@ def compile_data_with_io(
 
     ic("Compiling variant data for each contig.")
 
+    # Will soon be:
+    # at_core.variant_compilation(file_list)
+    # which is a call to a pyo3 module call to some rust functions
+
     # Double check that foles from a previous run aren't present
     if os.path.isfile("tmp.tsv"):
         os.remove("tmp.tsv")
