@@ -28,6 +28,7 @@ import itertools
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
+import amplityper_core as at # type: ignore
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
@@ -175,13 +176,13 @@ def construct_file_list(
     ic(glob_pattern)
 
     # collect a list of all the files to search
-    files_to_query = list(results_dir.glob(str(glob_pattern)))
+    files_to_query = at.build_file_list(results_dir, glob_pattern)
 
     # make sure that there aren't duplicates
     try:
         set(files_to_query)
     except ValueError as message:
-        return Err(f"Redudant files present that may corrupt results:\n{message}")
+        return Err(f"Redundant files present that may corrupt results:\n{message}")
 
     if len(files_to_query) == 0:
         return Err(
@@ -227,57 +228,11 @@ def compile_data_with_io(
     """
 
     ic("Compiling variant data for each contig.")
+    ic(config)
 
-    # Will soon be:
-    # at_core.variant_compilation(file_list)
-    # which is a call to a pyo3 module call to some rust functions
-
-    # Double check that foles from a previous run aren't present
-    if os.path.isfile("tmp.tsv"):
-        os.remove("tmp.tsv")
-    if os.path.isfile("tmp.arrow"):
-        os.remove("tmp.arrow")
-
-    if len(file_list) == 0:
-        return Err("No files found to compile data from.")
-
-    # compile all tables into one large temporary table
-    progress_bar = tqdm(total=len(file_list), ncols=100)
-    with open("tmp.tsv", "a", encoding="utf-8") as temp:
-        for i, file in enumerate(file_list):
-            progress_bar.update(1)
-            # Parse out information in the file path to add into the dataframe
-            simplename = os.path.basename(file).replace("_ivar.tsv", "")
-            sample_id = simplename.split(config.ivar_split_char)[config.id_split_index]
-            haplotype = simplename.split(config.ivar_split_char)[config.hap_split_index]
-            amplicon = simplename.replace(sample_id, "").replace(haplotype, "")
-
-            amplicon = amplicon[1:] if amplicon[0] == "_" else amplicon
-            amplicon = amplicon[:-1] if amplicon[-1] == "_" else amplicon
-
-            # quick test of whether the header should be written. It is only written
-            # the first time
-            write_header = bool(i == 0)
-
-            # Read the csv, modify it, and write it onto the growing temporary tsv
-            ivar_df = pl.read_csv(
-                file, separator="\t", raise_if_empty=True, null_values=["NA", ""]
-            )
-
-            # make empty row for haplotype info if iVar called no variants
-            if ivar_df.shape[0] == 0:
-                ivar_df.vstack(ivar_df.clear(n=1), in_place=True)
-
-            # Add sample, amplicon, and haplotype information
-            ivar_df.with_columns(
-                pl.lit(sample_id).alias("Sample ID"),
-                pl.lit(amplicon).alias("Amplicon"),
-                pl.lit(haplotype).alias("Contig"),
-                pl.lit(f"{amplicon}-{sample_id}-{haplotype}").alias(
-                    "Amplicon-Sample-Contig"
-                ),
-            ).write_csv(temp, separator="\t", include_header=write_header)
-    progress_bar.close()
+    # Use core module written in Rust to traverse the file system and run
+    # read/writes quickly
+    at.collate_results(file_list)
 
     ic("Converting variant data to compressed arrow format.")
 

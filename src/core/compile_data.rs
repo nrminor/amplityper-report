@@ -97,7 +97,7 @@ fn compile_with_io(
     Ok(())
 }
 
-fn convert_to_arrow() -> Result<DataFrame, PolarsError> {
+fn _convert_to_arrow() -> Result<DataFrame, PolarsError> {
     let mut tmp_arrow = File::create("tmp.arrow").expect("could not create arrow file.");
 
     {
@@ -113,7 +113,7 @@ fn convert_to_arrow() -> Result<DataFrame, PolarsError> {
 }
 
 // Meant to replace the entire loop in `compile_data_with_io()` in the py module
-pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<LazyFrame, String> {
+pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<(), String> {
     // Do away with files from previous runs (this will be replaced with tempfiles)
     if Path::new("tmp.tsv").exists() {
         let _ = fs::remove_file(Path::new("tmp.tsv"));
@@ -145,12 +145,8 @@ pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<LazyFrame, String>
         let write_header = i == 0;
 
         // compile the data
-        compile_with_io(file, &mut writer, write_header, &file_meta)?;
+        compile_with_io(file, &mut writer, write_header, &file_meta).unwrap();
     }
 
-    let all_haps_lf = convert_to_arrow()
-        .expect("Could not read temporary arrow file.")
-        .lazy();
-
-    Ok(all_haps_lf)
+    Ok(())
 }
