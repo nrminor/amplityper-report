@@ -227,7 +227,7 @@ def compile_data_with_io(
 
     if os.path.isfile("tmp.arrow") and whether_resume is True:
         all_contigs = pl.scan_ipc("tmp.arrow", memory_map=False)
-        os.remove("tmp.tsv")
+        os.remove("tmp.arrow")
         return Ok(all_contigs)
 
     ic("Compiling variant data for each contig.")
