@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as atc  # type: ignore
+import amplityper_core as atc  # type: ignore # pylint: disable=import-error
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
