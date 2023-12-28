@@ -37,7 +37,7 @@ from strictyaml import Int, Map, Str, YAMLError, load  # type: ignore
 from tqdm import tqdm  # type: ignore # pylint: disable=import-error
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ConfigParams:
     """
     The available config parameters provided in YAML format to this module are
@@ -52,7 +52,6 @@ class ConfigParams:
     fasta_split_index: int
     ivar_split_char: str
     id_split_index: int
-    hap_split_index: int
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -123,7 +122,6 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
             "fasta_split_index": Int(),
             "ivar_split_char": Str(),
             "id_split_index": Int(),
-            "hap_split_index": Int(),
         }
     )
 
@@ -145,7 +143,6 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         fasta_split_index=cast(int, config_dict.get("fasta_split_index")),
         ivar_split_char=str(config_dict.get("ivar_split_char")),
         id_split_index=cast(int, config_dict.get("id_split_index")),
-        hap_split_index=cast(int, config_dict.get("hap_split_index")),
     )
 
     ic("Configurations parsed.")
@@ -220,7 +217,7 @@ def compile_data_with_io(
 
     # Use core module written in Rust to traverse the file system and run
     # read/writes quickly
-    atc.collate_results(file_list) # pylint: disable=c-extension-no-member
+    atc.collate_results(file_list)  # pylint: disable=c-extension-no-member
 
     ic("Converting variant data to compressed arrow format.")
 
@@ -280,7 +277,13 @@ def collect_file_lists(
             f"No 'tidy' VCF tables found at the provided wildcard path:\n{tvcf_result.unwrap_err()}"
         )
 
-    return Ok((ivar_list_result.unwrap_or([]), fasta_list_result.unwrap(), tvcf_result.unwrap()))
+    return Ok(
+        (
+            ivar_list_result.unwrap_or([]),
+            fasta_list_result.unwrap(),
+            tvcf_result.unwrap(),
+        )
+    )
 
 
 def _try_parse_int(value: str) -> Optional[int]:
