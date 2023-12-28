@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as atc  # type: ignore # pylint: disable=import-error
+import amplityper_core as atc  # type: ignore
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
@@ -52,6 +52,7 @@ class ConfigParams:
     fasta_split_index: int
     ivar_split_char: str
     id_split_index: int
+    hap_split_index: int
 
 
 def parse_command_line_args() -> Result[argparse.Namespace, str]:
@@ -122,6 +123,7 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
             "fasta_split_index": Int(),
             "ivar_split_char": Str(),
             "id_split_index": Int(),
+            "hap_split_index": Int(),
         }
     )
 
@@ -143,6 +145,7 @@ def parse_configurations(config_path: Path) -> Result[ConfigParams, str]:
         fasta_split_index=cast(int, config_dict.get("fasta_split_index")),
         ivar_split_char=str(config_dict.get("ivar_split_char")),
         id_split_index=cast(int, config_dict.get("id_split_index")),
+        hap_split_index=cast(int, config_dict.get("hap_split_index")),
     )
 
     ic("Configurations parsed.")
@@ -402,7 +405,7 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
 
     header_written = False
 
-    progress_bar = tqdm(total=len(tvcf_list))
+    progress_bar = tqdm(total=len(tvcf_list), ncols=100)
     with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
         for tidy_vcf in tvcf_list:
             progress_bar.update(1)
@@ -474,7 +477,7 @@ def compile_contig_depths(fasta_list: List[Path], config: ConfigParams) -> pl.La
 
     seq_dicts = []
 
-    progress_bar = tqdm(total=len(fasta_list))
+    progress_bar = tqdm(total=len(fasta_list), ncols=100)
     for fasta in fasta_list:
         progress_bar.update(1)
         with open(fasta, "r", encoding="utf-8") as fasta_contents:
@@ -890,7 +893,7 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
 
     ic("Naming each haplotype.")
 
-    progress_bar = tqdm(total=len(sample_amp_dfs))
+    progress_bar = tqdm(total=len(sample_amp_dfs), ncols=100)
     for i, df in enumerate(sample_amp_dfs):
         progress_bar.update(1)
         cols = df.columns
