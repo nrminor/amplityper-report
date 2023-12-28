@@ -8,16 +8,18 @@ those haplotypes.
 
 
 ```
-usage: amplityper_report.py [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG]
+usage: at_report [-h] --results_dir RESULTS_DIR --gene_bed GENE_BED [--config CONFIG] [--resume RESUME]
 
 options:
-    -h, --help            show this help message and exit
-    --results_dir RESULTS_DIR, -d RESULTS_DIR
+  -h, --help            show this help message and exit
+  --results_dir RESULTS_DIR, -d RESULTS_DIR
                         Results 'root' directory to traverse in search if iVar tables and other files
-    --gene_bed GENE_BED, -b GENE_BED
+  --gene_bed GENE_BED, -b GENE_BED
                         BED of amplicons where the final column contains genes associated with each amplicon
-    --config CONFIG, -c CONFIG
+  --config CONFIG, -c CONFIG
                         YAML file used to configure module such that it avoids harcoding
+  --resume RESUME, -r RESUME
+                        Whether to resume if intermediate files from previous runs are detected.
 ```
 """
 
@@ -88,6 +90,14 @@ def parse_command_line_args() -> Result[argparse.Namespace, str]:
         required=False,
         default="config.yaml",
         help="YAML file used to configure module such that it avoids harcoding",
+    )
+    parser.add_argument(
+        "--resume",
+        "-r",
+        type=bool,
+        required=False,
+        default=False,
+        help="Whether to resume if intermediate files from previous runs are detected.",
     )
     args = parser.parse_args()
     if len(vars(args)) < 1:
@@ -194,7 +204,7 @@ def construct_file_list(
 
 
 def compile_data_with_io(
-    file_list: List[Path], config: ConfigParams
+    file_list: List[Path], config: ConfigParams, whether_resume: bool
 ) -> Result[pl.LazyFrame, str]:
     """
         Function `compile_data_with_io()` takes the list of paths and
@@ -214,6 +224,11 @@ def compile_data_with_io(
         `pl.LazyFrame`: A Polars LazyFrame to be queries and transformed
         downstream.
     """
+
+    if os.path.isfile("tmp.arrow") and whether_resume is True:
+        all_contigs = pl.scan_ipc("tmp.arrow", memory_map=False)
+        os.remove("tmp.tsv")
+        return Ok(all_contigs)
 
     ic("Compiling variant data for each contig.")
     ic(config)
@@ -383,7 +398,9 @@ def generate_seq_dict(
     return seq_dict
 
 
-def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
+def compile_mutation_codons(
+    tvcf_list: List[Path], whether_resume: bool
+) -> pl.LazyFrame:
     """
         Function `compile_mutation_codons()` loops through all "tidy" VCF files
         in a provided list of Paths and creates a Polars LazyFrame containing
@@ -400,8 +417,15 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
 
     ic("Compiling codon numbers for all coding mutations.")
 
-    if os.path.isfile("tmp.tvcf"):
+    if os.path.isfile("tmp.tvcf") and whether_resume is False:
         os.remove("tmp.tvcf")
+
+    if os.path.isfile("tmp.tvcf") and whether_resume is True:
+        amassed_codons = pl.read_csv(
+            "tmp.tvcf", separator="\t", ignore_errors=True
+        ).lazy()
+        os.remove("tmp.tvcf")
+        return amassed_codons
 
     header_written = False
 
@@ -926,6 +950,7 @@ def aggregate_haplotype_df(
     clean_fasta_list: List[Path],
     gene_bed: Path,
     config: ConfigParams,
+    whether_resume: bool,
 ) -> pl.DataFrame:
     """
         Function `aggregate_haplotype_df()` oversees the construction of a final
@@ -953,7 +978,7 @@ def aggregate_haplotype_df(
     gene_df = generate_gene_df(gene_bed)
 
     # construct a codon table for all mutations
-    codon_df = compile_mutation_codons(tvcf_list)
+    codon_df = compile_mutation_codons(tvcf_list, whether_resume)
 
     # construct long dataframe
     long_df = construct_long_df(long_contigs, gene_df, codon_df)
@@ -1002,6 +1027,7 @@ def main() -> None:
     results_dir = args_result.unwrap().results_dir
     config = args_result.unwrap().config
     gene_bed = args_result.unwrap().gene_bed
+    whether_resume = args_result.unwrap().resume
 
     # parse configurations from the config YAML file
     config_result = parse_configurations(config)
@@ -1025,7 +1051,9 @@ def main() -> None:
     clean_ivar_list, clean_fasta_list, clean_tvcf_list = collect_results.unwrap()
 
     # compile all files into one Polars LazyFrame to be queried downstream
-    all_contigs_result = compile_data_with_io(clean_ivar_list, config_result.unwrap())
+    all_contigs_result = compile_data_with_io(
+        clean_ivar_list, config_result.unwrap(), whether_resume
+    )
     if isinstance(all_contigs_result, Err):
         sys.exit(
             f"A dataframe could not be compiled.\n{all_contigs_result.unwrap_err()}"
@@ -1038,6 +1066,7 @@ def main() -> None:
         clean_fasta_list,
         gene_bed,
         config_result.unwrap(),
+        whether_resume,
     )
 
     # Sort the lazyframe first by contig frequency and then by position/amplicon
