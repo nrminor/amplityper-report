@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as atc  # type: ignore
+import amplityper_core as atc  # type: ignore # pylint: disable=import-error
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
@@ -402,7 +402,7 @@ def compile_mutation_codons(tvcf_list: List[Path]) -> pl.LazyFrame:
 
     header_written = False
 
-    progress_bar = tqdm(total=len(tvcf_list), ncols=100)
+    progress_bar = tqdm(total=len(tvcf_list))
     with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
         for tidy_vcf in tvcf_list:
             progress_bar.update(1)
@@ -474,7 +474,7 @@ def compile_contig_depths(fasta_list: List[Path], config: ConfigParams) -> pl.La
 
     seq_dicts = []
 
-    progress_bar = tqdm(total=len(fasta_list), ncols=100)
+    progress_bar = tqdm(total=len(fasta_list))
     for fasta in fasta_list:
         progress_bar.update(1)
         with open(fasta, "r", encoding="utf-8") as fasta_contents:
@@ -890,7 +890,7 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
 
     ic("Naming each haplotype.")
 
-    progress_bar = tqdm(total=len(sample_amp_dfs), ncols=100)
+    progress_bar = tqdm(total=len(sample_amp_dfs))
     for i, df in enumerate(sample_amp_dfs):
         progress_bar.update(1)
         cols = df.columns

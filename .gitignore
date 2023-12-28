@@ -77,3 +77,16 @@ cargo.lock
 
 # poetry lock
 poetry.lock
+
+# scratch
+scratch/
+*.ipynb
+
+# outputs
+*.xlsx
+*.arrow
+
+# MacOS files
+._*
+.DS_Store
+

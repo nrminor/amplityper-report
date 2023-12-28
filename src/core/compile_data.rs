@@ -1,3 +1,4 @@
+use indicatif::ProgressBar;
 use polars::prelude::IpcCompression::ZSTD;
 use polars::prelude::*;
 use polars_io::ipc::IpcWriter;
@@ -137,7 +138,10 @@ pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<(), String> {
 
     // For each iVar file in the glob expansion, read its contents and append them
     // to a temporary TSV
+    let num_files = file_list.len() as u64;
+    let pb = ProgressBar::new(num_files);
     for (i, file) in file_list.iter().enumerate() {
+        pb.inc(1);
         let file_meta = parse_ivar_name(file).expect("File metadata could not be parsed.");
 
         // quick test of whether the header should be written. It is only written
@@ -147,6 +151,7 @@ pub fn variant_compilation(file_list: Vec<PathBuf>) -> Result<(), String> {
         // compile the data
         compile_with_io(file, &mut writer, write_header, &file_meta).unwrap();
     }
+    pb.finish_with_message("File compilation complete.");
 
     Ok(())
 }
