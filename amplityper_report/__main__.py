@@ -30,13 +30,14 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-import amplityper_core as atc  # type: ignore
 import polars as pl
 from icecream import ic  # type: ignore # pylint: disable=import-error
 from pydantic.dataclasses import dataclass
 from result import Err, Ok, Result
 from strictyaml import Int, Map, Str, YAMLError, load  # type: ignore
 from tqdm import tqdm  # type: ignore # pylint: disable=import-error
+
+from . import amplityper_core as atc  # type: ignore
 
 
 @dataclass(frozen=True, kw_only=True)

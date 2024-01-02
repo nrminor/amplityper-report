@@ -13,9 +13,12 @@ classifiers = [
 dynamic = ["version"]
 
 [tool.maturin]
-python-source = "src/amplityper_report"
-manifest-path = "src/core/Cargo.toml"
+module-name = "amplityper_report.amplityper_core"
+python-source = "amplityper_report"
+manifest-path = "Cargo.toml"
 features = ["pyo3/extension-module"]
+cargo-extra-args = ["--features", "pyo3/extension-module"]
+locked = true
 
 [tool.poetry]
 name = "amplityper-report"
@@ -55,7 +58,7 @@ codecarbon = "^2.3.2"
 just = "^0.8.161"
 
 [tool.poetry.scripts]
-"at_report" = "amplityper_report.main:main"
+"at_report" = "amplityper_report.__main__:main"
 
 [project.scripts]
-"at_report" = "amplityper_report.main:main"
+"at_report" = "amplityper_report.__main__:main"

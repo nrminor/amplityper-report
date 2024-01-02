@@ -22,6 +22,7 @@ fn collate_results(file_list: Vec<PathBuf>) -> PyResult<()> {
 
 /// A Python data compiler module implemented in Rust.
 #[pymodule]
+#[pyo3(name = "amplityper_core")]
 fn amplityper_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(collate_results, m)?)?;
     m.add_function(wrap_pyfunction!(build_file_list, m)?)?;
