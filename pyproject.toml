@@ -38,6 +38,7 @@ tqdm = "^4.66.1"
 xlsx2csv = "^0.8.1"
 pydantic = "^2.5.2"
 maturin = "^1.4.0"
+plotnine = "^0.12.4"
 
 
 [tool.poetry.group.dev.dependencies]

@@ -469,9 +469,12 @@ def compile_mutation_codons(
                 write_header = False
 
             # write out
-            pl.DataFrame({"NUC_SUB": nuc_subs, "CODON": num_codons}).unique().write_csv(
-                tmp_file, separator="\t", include_header=write_header
-            )
+            if len(nuc_subs) > 0:
+                pl.DataFrame(
+                    {"NUC_SUB": nuc_subs, "CODON": num_codons}
+                ).drop_nulls().unique().write_csv(
+                    tmp_file, separator="\t", include_header=write_header
+                )
     progress_bar.close()
 
     ic("All codons compiled in temporary file.")
