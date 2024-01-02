@@ -429,7 +429,7 @@ def compile_mutation_codons(
 
     header_written = False
 
-    progress_bar = tqdm(total=len(tvcf_list), ncols=100)
+    progress_bar = tqdm(total=len(tvcf_list))
     with open("tmp.tvcf", "a", encoding="utf-8") as tmp_file:
         for tidy_vcf in tvcf_list:
             progress_bar.update(1)
@@ -507,7 +507,7 @@ def compile_contig_depths(fasta_list: List[Path], config: ConfigParams) -> pl.La
 
     seq_dicts = []
 
-    progress_bar = tqdm(total=len(fasta_list), ncols=100)
+    progress_bar = tqdm(total=len(fasta_list))
     for fasta in fasta_list:
         progress_bar.update(1)
         with open(fasta, "r", encoding="utf-8") as fasta_contents:
@@ -691,9 +691,14 @@ def construct_long_df(
         )
         .unique()
         .with_columns(
-            pl.concat_str(
-                [pl.col("REF"), pl.col("POS"), pl.col("ALT")], separator="-"
-            ).alias("NUC_SUB")
+            pl.when(pl.col("ALT").is_null())
+            .then(pl.lit(pl.Null))
+            .otherwise(
+                pl.concat_str(
+                    [pl.col("REF"), pl.col("POS"), pl.col("ALT")], separator="-"
+                )
+            )
+            .alias("NUC_SUB")
         )
         .join(gene_df, how="left", on="Amplicon")
         .join(codon_df, how="left", on="NUC_SUB")
@@ -923,7 +928,7 @@ def assign_haplotype_names(unnamed_df: pl.LazyFrame) -> pl.DataFrame:
 
     ic("Naming each haplotype.")
 
-    progress_bar = tqdm(total=len(sample_amp_dfs), ncols=100)
+    progress_bar = tqdm(total=len(sample_amp_dfs))
     for i, df in enumerate(sample_amp_dfs):
         progress_bar.update(1)
         cols = df.columns
@@ -1092,7 +1097,7 @@ def main() -> None:
     )
 
     # clear temporary arrow structure
-    if os.path.isfile("tmp.arrow"):
+    if os.path.isfile("tmp.arrow") and whether_resume is False:
         os.remove("tmp.arrow")
 
 
