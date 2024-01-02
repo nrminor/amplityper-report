@@ -13,12 +13,11 @@ classifiers = [
 dynamic = ["version"]
 
 [tool.maturin]
-module-name = "amplityper_report.amplityper_core"
+module-name = "amplityper_core"
 python-source = "amplityper_report"
 manifest-path = "Cargo.toml"
 features = ["pyo3/extension-module"]
 cargo-extra-args = ["--features", "pyo3/extension-module"]
-locked = true
 
 [tool.poetry]
 name = "amplityper-report"
