@@ -468,11 +468,14 @@ def compile_mutation_codons(
             else:
                 write_header = False
 
-            # write out
-            if len(nuc_subs) > 0:
-                pl.DataFrame(
-                    {"NUC_SUB": nuc_subs, "CODON": num_codons}
-                ).drop_nulls().unique().write_csv(
+            # construct data frame
+            codon_df = pl.DataFrame(
+                {"NUC_SUB": nuc_subs, "CODON": num_codons}
+            ).drop_nulls()
+
+            # write out if any data was found
+            if codon_df.shape[0] > 0:
+                codon_df.unique().write_csv(
                     tmp_file, separator="\t", include_header=write_header
                 )
     progress_bar.close()
